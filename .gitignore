@@ -1,0 +1,9 @@
+figures/
+output/*.csv
+output/*.pdf
+output/问题1gpt_文本内容.txt
+extract_pdf.rb
+__pycache__/
+*.pyc
+.DS_Store
+
