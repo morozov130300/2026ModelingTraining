@@ -2,9 +2,9 @@ PS Microsoft.PowerShell.Core\FileSystem::\\HwFs\HMOS_共享文件夹\Project> & 
 ======================================================================
 问题1：主要变量筛选
 方案: 问题1gpt.pdf + advanced_preprocessing预处理
-流程: MICE插补 → 删除日期 → 单因素(p<0.05) → LASSO → 回归验证
+流程: MICE插补 → 单因素(p<0.05) → LASSO(5~10变量) → 回归验证 + VIF
 ======================================================================
-开始时间: 2026-07-23 09:40:47
+开始时间: 2026-07-23 10:12:29
 ============================================================
 Step 0: 数据加载与预处理
    - MICE多重插补（advanced_preprocessing）
@@ -131,33 +131,111 @@ gender_male 连续   0.142224 4.631256e-28
  *r-谷氨酰基转换酶 连续   0.120251 1.822067e-20
   高密度脂蛋白胆固醇 连续  -0.093975 4.624316e-13
 
-  未通过的特征: ['血小板平均体积', '嗜碱细胞%', '乙肝表面抗原', '白球比例', '乙肝e抗体', '乙肝表面抗体', '乙肝核心抗体', '白蛋白', '红细胞平均体积', '乙肝e抗原', '单核细胞%', '嗜酸细胞%']
-Traceback (most recent call last):
-  File "\\HwFs\HMOS_共享文件夹\Project\t1.py", line 407, in <module>
-    main()
-  File "\\HwFs\HMOS_共享文件夹\Project\t1.py", line 382, in main
-    candidates = step1_univariate_screening(df)
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "\\HwFs\HMOS_共享文件夹\Project\t1.py", line 159, in step1_univariate_screening
-    bars = ax.barh(range(len(plot_df)), plot_df['Pearson_r'],
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\axes\_axes.py", line 2794, in barh
-    patches = self.bar(x=left, height=height, width=width, bottom=y,
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\__init__.py", line 1528, in inner
-    return func(
-           ^^^^^
-  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\axes\_axes.py", line 2611, in bar
-    r._internal_update(kwargs)
-  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\artist.py", line 1313, in _internal_update
-    return self._update_props(
-           ^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\artist.py", line 1274, in _update_props
-    ret.append(func(v))
-               ^^^^^^^
-  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\patches.py", line 487, in set_alpha
-    super().set_alpha(alpha)
-  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\artist.py", line 1073, in set_alpha
-    raise TypeError(
-TypeError: alpha must be numeric or None, not <class 'list'>
+  未通过的特征: ['血小板平均体积', '嗜碱细胞%', '乙肝表面抗原', '白球比例', '乙肝e抗体', '乙肝表面抗体', '乙肝核心抗体', '白蛋白', '红细胞平均体积','乙肝e抗原', '单核细胞%', '嗜酸细胞%']
+
+  图表: ./figures/问题1_单因素相关性分析.png
+
+============================================================
+Step 2: LASSO变量选择（PDF Step 3）
+方法: 沿正则化路径搜索，自动选取使变量数在5~10个的λ
+============================================================
+
+候选特征数: 32
+样本数: 5905
+
+min-CV(λ=0.001277) → 26个变量
+选中λ=0.150403 → 5个变量 ✓
+
+LASSO选中的变量 (5 个):
+  age                            (年龄          )  系数=+0.215660
+  TG                             (甘油三酯        )  系数=+0.195474
+  BUN                            (尿素          )  系数=+0.011612
+  HGB                            (血红蛋白        )  系数=+0.023891
+  ALT                            (*丙氨酸氨基转换酶   )  系数=+0.001559
+
+  图表: ./figures/问题1_LASSO正则化路径.png
+
+============================================================
+Step 2.5: 显著性校验（轻量）
+说明: LASSO已选出5~10个变量，此步仅验证其回归显著性
+============================================================
+    第1轮 → 停止（最大p=0.0000 ≤ 0.05）
+
+向后消去后剩余 5 个变量:
+  age (年龄)
+  TG (甘油三酯)
+  BUN (尿素)
+  HGB (血红蛋白)
+  ALT (*丙氨酸氨基转换酶)
+
+============================================================
+Step 3: VIF多重共线性诊断
+============================================================
+
+VIF结果:
+ 特征       中文名       VIF
+HGB      血红蛋白 26.717308
+BUN        尿素 21.671465
+age        年龄 13.687339
+ALT *丙氨酸氨基转换酶  3.169051
+ TG      甘油三酯  2.459026
+
+VIF>10的变量（存在共线性问题）: ['HGB', 'BUN', 'age']
+  图表: ./figures/问题1_VIF共线性诊断.png
+
+============================================================
+Step 4: 多元线性回归验证（PDF Step 4）
+目的：回归系数解释 + 显著性检验 + 变量合理性验证
+============================================================
+                            OLS Regression Results
+==============================================================================
+Dep. Variable:                glucose   R-squared:                       0.130
+Model:                            OLS   Adj. R-squared:                  0.130
+Method:                 Least Squares   F-statistic:                     177.0
+Date:                Thu, 23 Jul 2026   Prob (F-statistic):          4.95e-176
+Time:                        10:12:55   Log-Likelihood:                -10468.
+No. Observations:                5905   AIC:                         2.095e+04
+Df Residuals:                    5899   BIC:                         2.099e+04
+Df Model:                           5
+Covariance Type:            nonrobust
+==============================================================================
+                 coef    std err          t      P>|t|      [0.025      0.975]
+------------------------------------------------------------------------------
+const          2.6864      0.185     14.537      0.000       2.324       3.049
+age            0.0262      0.002     17.353      0.000       0.023       0.029
+TG             0.1815      0.012     14.920      0.000       0.158       0.205
+BUN            0.0858      0.017      4.988      0.000       0.052       0.119
+HGB            0.0057      0.001      4.607      0.000       0.003       0.008
+ALT            0.0057      0.001      5.796      0.000       0.004       0.008
+==============================================================================
+Omnibus:                     6766.581   Durbin-Watson:                   1.955
+Prob(Omnibus):                  0.000   Jarque-Bera (JB):          1248338.952
+Skew:                           5.719   Prob(JB):                         0.00
+Kurtosis:                      73.305   Cond. No.                     1.58e+03
+==============================================================================
+
+Notes:
+[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+[2] The condition number is large, 1.58e+03. This might indicate that there are
+strong multicollinearity or other numerical problems.
+
+系数表已保存: ./output/问题1_最终回归系数.csv
+  图表: ./figures/问题1_最终回归系数森林图.png
+  图表: ./figures/问题1_模型诊断图.png
+
+============================================================
+生成最终变量相关性热力图
+============================================================
+  图表: ./figures/问题1_最终变量相关性热力图.png
+
+======================================================================
+问题1分析完成！
+最终确定 5 个主要变量（控制在5~10个）:
+  1. age (年龄)
+  2. TG (甘油三酯)
+  3. BUN (尿素)
+  4. HGB (血红蛋白)
+  5. ALT (*丙氨酸氨基转换酶)
+完成时间: 2026-07-23 10:13:01
+======================================================================
 PS Microsoft.PowerShell.Core\FileSystem::\\HwFs\HMOS_共享文件夹\Project> 

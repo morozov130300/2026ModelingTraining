@@ -40,6 +40,9 @@ Thumbs.db
 .arts/
 .bitfun/
 
+# Problem statements (not part of solution)
+2026年武汉理工大学数学建模训练题目1-3/
+
 # Jupyter
 .ipynb_checkpoints/
 
