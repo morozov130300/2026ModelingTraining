@@ -36,57 +36,114 @@ SEP2 = "-" * 60
 
 # 可视化设置 — 中文字体检测与配置
 import matplotlib.font_manager as fm
-
-# 方法1：扫描已注册字体名
-_chinese_fonts = [f.name for f in fm.fontManager.ttflist
-                  if any(k in f.name for k in ["SimHei", "YaHei", "Hei", "WenQuanYi",
-                                                "Noto Sans CJK", "Source Han",
-                                                "FangSong", "KaiTi", "NSimSun",
-                                                "DengXian", "STSong", "STHeiti",
-                                                "STKaiti"])]
-
-# 方法2：直接扫描Windows字体目录下的字体文件
+import matplotlib as _mpl
 import glob as _glob
-_font_dirs = [
-    os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"),
-    "/usr/share/fonts",
-    "/usr/local/share/fonts",
-    os.path.expanduser("~/.fonts"),
-    os.path.expanduser("~/Library/Fonts"),
-]
-_chinese_fnames = ["msyh.ttf", "msyh.ttc", "msyhbd.ttf", "simhei.ttf",
-                   "simsun.ttc", "simsun.ttf", "Deng.ttf", "Dengb.ttf",
-                   "NotoSansCJKsc-Regular.otf", "NotoSansSC-Regular.otf",
-                   "wqy-microhei.ttc", "wqy-zenhei.ttc"]
-for _d in _font_dirs:
-    if os.path.isdir(_d):
-        for _fn in _chinese_fnames:
-            _fp = os.path.join(_d, _fn)
-            if os.path.exists(_fp):
-                try:
-                    fm.fontManager.addfont(_fp)
-                    _chinese_fonts.append(fm.FontProperties(fname=_fp).get_name())
-                except Exception:
-                    pass
 
-# 去重并设置
-if _chinese_fonts:
-    _chinese_fonts = list(dict.fromkeys(_chinese_fonts))  # 去重保序
-    plt.rcParams["font.sans-serif"] = _chinese_fonts[:1]
-    # 验证字体是否可用
+# 清除matplotlib字体缓存
+_cache_dir = _mpl.get_cachedir()
+for _cf in _glob.glob(os.path.join(_cache_dir, "fontlist*")):
     try:
-        _fp = fm.FontProperties(family=_chinese_fonts[0])
-        plt.rcParams["font.family"] = _chinese_fonts[0]
+        os.remove(_cf)
     except Exception:
-        plt.rcParams["font.family"] = "sans-serif"
+        pass
+
+# 直接找系统中文字体文件
+_cn_font_path = None
+_cn_font_dirs = [
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"),
+    "/usr/share/fonts", "/usr/local/share/fonts",
+    os.path.expanduser("~/.fonts"),
+]
+_cn_font_files = ["msyh.ttc", "msyh.ttf", "msyhbd.ttf", "simhei.ttf",
+                  "simsun.ttc", "Deng.ttf", "NotoSansCJKsc-Regular.otf",
+                  "wqy-microhei.ttc"]
+for _d in _cn_font_dirs:
+    if os.path.isdir(_d):
+        for _fn in _cn_font_files:
+            _fp = os.path.join(_d, _fn)
+            if os.path.isfile(_fp):
+                _cn_font_path = _fp
+                break
+    if _cn_font_path:
+        break
+
+# 直接注册字体并设为全局默认
+if _cn_font_path:
+    fm.fontManager.addfont(_cn_font_path)
+    _fp_prop = fm.FontProperties(fname=_cn_font_path)
+    _cn_family = _fp_prop.get_name()
+    # 重置rcParams然后直接设为该字体
+    plt.rcdefaults()
+    plt.rcParams["font.family"] = _cn_family
+    plt.rcParams["font.sans-serif"] = [_cn_family]
+    print(f"  [字体] 已加载中文字体: {_cn_family}")
 else:
-    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei",
-                                        "WenQuanYi Micro Hei", "DejaVu Sans"]
+    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
     plt.rcParams["font.family"] = "sans-serif"
+    print("  [字体] 未找到中文字体文件，尝试系统默认")
+
 plt.rcParams["axes.unicode_minus"] = False
 plt.rcParams["figure.dpi"] = 150
 plt.rcParams["savefig.dpi"] = 300
 sns.set_style("whitegrid")
+
+# 创建全局中文字体对象，用于显式设置到每个文字元素
+if _cn_font_path:
+    _CN_FONT = fm.FontProperties(fname=_cn_font_path, size=13)
+    _CN_FONT_TITLE = fm.FontProperties(fname=_cn_font_path, size=15, weight="bold")
+    _CN_FONT_SMALL = fm.FontProperties(fname=_cn_font_path, size=9)
+    _CN_FONT_TICK = fm.FontProperties(fname=_cn_font_path, size=10)
+    _CN_FONT_LEGEND = fm.FontProperties(fname=_cn_font_path, size=9)
+else:
+    _CN_FONT = None
+
+
+def _apply_font(ax, title_prop=None, xlabel_prop=None, ylabel_prop=None,
+                tick_prop=None, legend_prop=None):
+    """对ax的所有文字元素显式设置中文字体。"""
+    if _CN_FONT is None:
+        return
+    tp = title_prop or _CN_FONT_TITLE
+    lp = legend_prop or _CN_FONT_LEGEND
+    tkp = tick_prop or _CN_FONT_TICK
+    xp = xlabel_prop or _CN_FONT
+    yp = ylabel_prop or _CN_FONT
+
+    if ax.title:
+        ax.title.set_fontproperties(tp)
+    if ax.xaxis.label:
+        ax.xaxis.label.set_fontproperties(xp)
+    if ax.yaxis.label:
+        ax.yaxis.label.set_fontproperties(yp)
+    for lbl in ax.get_xticklabels():
+        lbl.set_fontproperties(tkp)
+    for lbl in ax.get_yticklabels():
+        lbl.set_fontproperties(tkp)
+    legend = ax.get_legend()
+    if legend:
+        for txt in legend.get_texts():
+            txt.set_fontproperties(lp)
+        if legend.get_title():
+            legend.get_title().set_fontproperties(lp)
+
+def _apply_font_figure(fig, tick_size=9):
+    """遍历figure的所有axes应用中文字体。"""
+    for ax in fig.axes:
+        tp = fm.FontProperties(fname=_cn_font_path, size=14, weight="bold") if _cn_font_path else None
+        if _CN_FONT:
+            ax.title.set_fontproperties(tp) if ax.title else None
+            if ax.xaxis.label:
+                ax.xaxis.label.set_fontproperties(_CN_FONT)
+            if ax.yaxis.label:
+                ax.yaxis.label.set_fontproperties(_CN_FONT)
+            for lbl in ax.get_xticklabels():
+                lbl.set_fontproperties(fm.FontProperties(fname=_cn_font_path, size=tick_size) if _cn_font_path else None)
+            for lbl in ax.get_yticklabels():
+                lbl.set_fontproperties(fm.FontProperties(fname=_cn_font_path, size=tick_size) if _cn_font_path else None)
+            legend = ax.get_legend()
+            if legend:
+                for txt in legend.get_texts():
+                    txt.set_fontproperties(fm.FontProperties(fname=_cn_font_path, size=8) if _cn_font_path else None)
 
 # 图片输出目录
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
@@ -499,6 +556,7 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
     ax.legend(loc="best", fontsize=7, ncol=2)
     ax.axhline(y=0, color="gray", linestyle=":", linewidth=0.5)
     plt.tight_layout()
+    _apply_font_figure(fig)
     fig.savefig(os.path.join(OUTPUT_DIR, "LASSO系数路径图.png"), dpi=300)
     plt.close(fig)
     print("    -> LASSO系数路径图.png")
@@ -525,6 +583,7 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
     ax.set_title("LASSO 交叉验证曲线", fontsize=15, fontweight="bold")
     ax.legend(fontsize=10)
     plt.tight_layout()
+    _apply_font_figure(fig)
     fig.savefig(os.path.join(OUTPUT_DIR, "LASSO交叉验证曲线.png"), dpi=300)
     plt.close(fig)
     print("    -> LASSO交叉验证曲线.png")
@@ -561,6 +620,7 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
     cbar = plt.colorbar(sm, ax=ax, orientation="vertical", pad=0.02, shrink=0.6)
     cbar.set_label("相关系数值", fontsize=10)
     plt.tight_layout()
+    _apply_font_figure(fig)
     fig.savefig(os.path.join(OUTPUT_DIR, "单因素相关性条形图.png"), dpi=300)
     plt.close(fig)
     print("    -> 单因素相关性条形图.png")
@@ -587,6 +647,7 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
                     annot_kws={"fontsize": 8}, ax=ax)
         ax.set_title("入选变量相关系数矩阵热力图", fontsize=15, fontweight="bold")
         plt.tight_layout()
+        _apply_font_figure(fig)
         fig.savefig(os.path.join(OUTPUT_DIR, "入选变量相关系数热力图.png"), dpi=300)
         plt.close(fig)
         print("    -> 入选变量相关系数热力图.png")
@@ -604,6 +665,7 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
                          plot_kws={"alpha": 0.3, "s": 5, "edgecolor": "none"})
         g.fig.suptitle("入选变量与血糖的散点图矩阵", fontsize=15, fontweight="bold", y=1.02)
         plt.tight_layout()
+        _apply_font_figure(g.fig, tick_size=7)
         g.savefig(os.path.join(OUTPUT_DIR, "入选变量散点图矩阵.png"), dpi=300)
         plt.close(g.fig)
         print("    -> 入选变量散点图矩阵.png")
