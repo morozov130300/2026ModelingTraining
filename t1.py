@@ -155,12 +155,12 @@ def step1_univariate_screening(df):
     fig, ax = plt.subplots(figsize=(12, 7))
     plot_df = result_df.sort_values('Pearson_r')
     colors = ['#e74c3c' if r > 0 else '#3498db' for r in plot_df['Pearson_r']]
-    alpha_vals = [1.0 if p < P_THRESHOLD else 0.25 for p in plot_df['Pearson_p']]
     bars = ax.barh(range(len(plot_df)), plot_df['Pearson_r'],
-                   color=colors, alpha=alpha_vals)
-    # 标记未通过的特征
+                   color=colors, alpha=1.0)
+    # 逐一设置透明度（alpha不支持列表，需逐bar设置）
     for i, (_, row) in enumerate(plot_df.iterrows()):
         if row['Pearson_p'] >= P_THRESHOLD:
+            bars[i].set_alpha(0.25)
             ax.text(0, i, ' ✗ p≥0.05', va='center', fontsize=7, color='gray')
 
     ax.set_yticks(range(len(plot_df)))
