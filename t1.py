@@ -558,12 +558,17 @@ def step4_regression_validation(df, selected_features):
     y_pos = range(len(plot_df))
     # 标记显著与否的颜色
     point_colors = ['#2ECC71' if p < 0.05 else '#BDC3C7' for p in plot_df['p值']]
+
+    # 先画误差棒（不带标记）
     ax.errorbar(plot_df['系数(B)'], y_pos,
                 xerr=[(plot_df['系数(B)'] - plot_df['95%CI_lower']),
                       (plot_df['95%CI_upper'] - plot_df['系数(B)'])],
-                fmt='o', capsize=4, markersize=9, color='#2C3E50',
-                markerfacecolor=point_colors, markeredgecolor='#2C3E50', markeredgewidth=1,
-                ecolor='#7F8C8D', elinewidth=1.5)
+                fmt='none', ecolor='#7F8C8D', elinewidth=1.5, capsize=4)
+    # 再逐个画标记点（支持不同颜色）
+    for i, (_, row) in enumerate(plot_df.iterrows()):
+        ax.plot(row['系数(B)'], i, 'o', markersize=9,
+                color='#2C3E50', markerfacecolor=point_colors[i],
+                markeredgecolor='#2C3E50', markeredgewidth=1)
 
     # 标注p值
     for i, (_, row) in enumerate(plot_df.iterrows()):
