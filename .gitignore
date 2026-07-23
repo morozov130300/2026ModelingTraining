@@ -7,3 +7,12 @@ __pycache__/
 *.pyc
 .DS_Store
 
+.bitfun/
+.arts/
+终端运行结果.txt
+*.log
+output/*.md
+.vscode/
+.idea/
+*.swp
+*.swo
