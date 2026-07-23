@@ -7,10 +7,9 @@ t1.py — 问题1：主要变量筛选（严格按问题1gpt.pdf方案）
   1. MICE多重插补（调用 advanced_preprocessing）
   2. 删除日期衍生变量（exam_year, exam_month）
   3. 单因素相关性分析（Pearson/Spearman, p<0.05）
-  4. LASSO变量压缩（LassoCV, 1se准则选λ）
-  5. 向后消去法二次筛选（p_remove=0.05）→ 5~10个主要变量
-  6. VIF多重共线性诊断
-  7. 多元线性回归验证
+  4. LASSO变量选择（沿正则化路径自动选取5~10个变量）
+  5. 显著性校验 + VIF多重共线性诊断
+  6. 多元线性回归验证
 
 用法:
   python t1.py
@@ -31,7 +30,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import statsmodels.api as sm
 from statsmodels.stats.outliers_influence import variance_inflation_factor
-from sklearn.linear_model import LassoCV, Lasso
+from sklearn.linear_model import LassoCV, Lasso, lasso_path
 from sklearn.preprocessing import StandardScaler
 from advanced_preprocessing import preprocess_with_advanced_imputation, COLUMN_MAP
 
@@ -181,10 +180,10 @@ def step1_univariate_screening(df):
 # Step 2: LASSO变量选择（PDF Step 3）
 # ============================================================================
 def step2_lasso(df, candidate_features):
-    """LASSO变量压缩：LassoCV交叉验证 + 1se准则选取更严格λ"""
+    """LASSO变量选择：沿正则化路径搜索能筛选出5~10个变量的最优λ"""
     print("\n" + "=" * 60)
-    print("Step 2: LASSO变量压缩（PDF Step 3）")
-    print("方法: LassoCV, 5折交叉验证, 1se准则选λ")
+    print("Step 2: LASSO变量选择（PDF Step 3）")
+    print("方法: 沿正则化路径搜索，自动选取使变量数在5~10个的λ")
     print("=" * 60)
 
     X = df[candidate_features].copy()
@@ -203,49 +202,67 @@ def step2_lasso(df, candidate_features):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    # LassoCV交叉验证
-    lasso = LassoCV(
-        cv=5,
+    # 沿全正则化路径，精细搜索变量数
+    alphas_path, coefs_path, _ = lasso_path(
+        X_scaled, y,
+        alphas=np.logspace(-3, 0.5, 300),  # 0.001 ~ 3.16, 精细300步
         random_state=RANDOM_SEED,
-        max_iter=10000,
-        n_jobs=-1,
-        alphas=np.logspace(-4, 1, 100)
+        max_iter=10000
     )
-    lasso.fit(X_scaled, y)
+    # alphas_path的索引0=最大α（最简模型），索引-1=最小α（最复杂模型）
+    n_nonzero = np.sum(np.abs(coefs_path) > 1e-6, axis=0)
 
-    # === 1se准则：选择MSE在最小值1个标准误内的最大λ（更严格） ===
-    alphas = lasso.alphas_                       # 递减顺序
-    mse_mean = lasso.mse_path_.mean(axis=1)
-    mse_std = lasso.mse_path_.std(axis=1)
-    min_idx = np.argmin(mse_mean)
-    one_se = mse_mean[min_idx] + mse_std[min_idx]
+    # === 搜索目标: 5~10个变量 ===
+    target_min, target_max = 5, 10
+    selected_alpha = None
+    selected_count = 0
+    selected_idx = 0
 
-    # 找出满足MSE <= (min+1se)的最大α（即最左侧索引）
-    candidates_1se = np.where(mse_mean <= one_se)[0]
-    alpha_1se_idx = candidates_1se[0]
-    alpha_1se = alphas[alpha_1se_idx]
+    # 从最简模型向复杂搜索：找第一个变量数 >= target_min 的位置
+    for i in range(len(alphas_path)):
+        cnt = n_nonzero[i]
+        if target_min <= cnt <= target_max:
+            selected_alpha = alphas_path[i]
+            selected_count = cnt
+            selected_idx = i
+            break
+    else:
+        # 没有精确落在范围内的：找变量数刚好超过target_max的位置
+        for i in range(len(alphas_path)):
+            cnt = n_nonzero[i]
+            if cnt >= target_min:
+                selected_alpha = alphas_path[i]
+                selected_count = cnt
+                selected_idx = i
+                break
+        # 兜底：取最简模型中变量数最接近target_max的
+        if selected_alpha is None:
+            # 从复杂端往回找
+            for i in range(len(alphas_path) - 1, -1, -1):
+                cnt = n_nonzero[i]
+                if cnt > 0:
+                    selected_alpha = alphas_path[i + 1] if i + 1 < len(alphas_path) else alphas_path[i]
+                    selected_count = n_nonzero[i + 1] if i + 1 < len(alphas_path) else cnt
+                    selected_idx = i + 1 if i + 1 < len(alphas_path) else i
+                    break
 
-    # 用1se对应的α重新拟合
-    lasso_final = Lasso(alpha=alpha_1se, max_iter=10000, random_state=RANDOM_SEED)
+    # 用选中α拟合最终模型
+    lasso_final = Lasso(alpha=selected_alpha, max_iter=10000, random_state=RANDOM_SEED)
     lasso_final.fit(X_scaled, y)
-
-    # 提取选中变量
     coef_mask = np.abs(lasso_final.coef_) > 1e-6
     selected_features = [candidate_features[i] for i, keep in enumerate(coef_mask) if keep]
 
-    print(f"\n最小MSE对应λ: {lasso.alpha_:.6f} (非零系数: {np.sum(np.abs(lasso.coef_) > 1e-6)})")
-    print(f"1se准则对应λ:  {alpha_1se:.6f}")
-    print(f"1se规则非零系数个数: {sum(coef_mask)} / {len(candidate_features)}")
+    # 同时也用min-CV α做对比（仅用于展示CV误差路径）
+    lasso_cv = LassoCV(cv=5, random_state=RANDOM_SEED, max_iter=10000, alphas=np.logspace(-3, 0.5, 100))
+    lasso_cv.fit(X_scaled, y)
+    alpha_min = lasso_cv.alpha_
+    # 提取min-CV的变量数
+    lasso_cv_final = Lasso(alpha=alpha_min, max_iter=10000, random_state=RANDOM_SEED)
+    lasso_cv_final.fit(X_scaled, y)
+    cv_count = np.sum(np.abs(lasso_cv_final.coef_) > 1e-6)
 
-    # === 若1se选出0个变量，回退到最小MSE对应的λ ===
-    if len(selected_features) == 0:
-        print("\n  1se准则未选中任何变量，回退到最小MSE对应λ")
-        alpha_1se = lasso.alpha_
-        lasso_final = Lasso(alpha=alpha_1se, max_iter=10000, random_state=RANDOM_SEED)
-        lasso_final.fit(X_scaled, y)
-        coef_mask = np.abs(lasso_final.coef_) > 1e-6
-        selected_features = [candidate_features[i] for i, keep in enumerate(coef_mask) if keep]
-        print(f"  回退后非零系数个数: {sum(coef_mask)} / {len(candidate_features)}")
+    print(f"\nmin-CV(λ={alpha_min:.6f}) → {cv_count}个变量")
+    print(f"选中λ={selected_alpha:.6f} → {selected_count}个变量 ✓")
 
     if selected_features:
         print(f"\nLASSO选中的变量 ({len(selected_features)} 个):")
@@ -253,31 +270,26 @@ def step2_lasso(df, candidate_features):
             idx = candidate_features.index(f)
             coef_val = lasso_final.coef_[idx]
             print(f"  {f:30s} ({col_map_reverse.get(f, f):12s})  系数={coef_val:+.6f}")
-    else:
-        print("\n警告: LASSO未选中任何变量！")
 
     # 保存LASSO路径图
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    # 左图：交叉验证误差路径（标出min和1se）
+    # 左图：变量数随λ的变化
     ax = axes[0]
-    ax.plot(np.log10(alphas), mse_mean, 'b-', label='CV均值')
-    ax.fill_between(np.log10(alphas),
-                    mse_mean - mse_std, mse_mean + mse_std,
-                    alpha=0.2, color='b')
-    ax.axvline(np.log10(lasso.alpha_), color='r', linestyle='--', alpha=0.5,
-               label=f'λ_min=10^{np.log10(lasso.alpha_):.2f}')
-    ax.axvline(np.log10(alpha_1se), color='darkred', linestyle='-', linewidth=2,
-               label=f'λ_1se=10^{np.log10(alpha_1se):.2f}')
-    ax.axhline(one_se, color='gray', linestyle=':', alpha=0.7,
-               label='min+1se')
+    ax.plot(np.log10(alphas_path), n_nonzero, 'b-', linewidth=2)
+    ax.axhline(target_min, color='green', linestyle='--', alpha=0.5, label=f'目标下限={target_min}')
+    ax.axhline(target_max, color='green', linestyle='--', alpha=0.5, label=f'目标上限={target_max}')
+    ax.axvline(np.log10(selected_alpha), color='darkred', linestyle='-', linewidth=2,
+               label=f'选中λ=10^{np.log10(selected_alpha):.2f} ({selected_count}个变量)')
+    ax.fill_between(np.log10(alphas_path), target_min, target_max,
+                    alpha=0.1, color='green')
     ax.set_xlabel('log10(λ)')
-    ax.set_ylabel('均方误差')
-    ax.set_title('LASSO交叉验证误差路径（1se准则）')
+    ax.set_ylabel('非零系数个数')
+    ax.set_title('LASSO正则化路径（变量数 vs λ）')
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
-    # 右图：系数
+    # 右图：选中变量的系数
     ax = axes[1]
     coef_df = pd.DataFrame({
         '特征': selected_features,
@@ -291,7 +303,7 @@ def step2_lasso(df, candidate_features):
     ax.set_yticklabels(coef_df['中文名'], fontsize=9)
     ax.axvline(0, color='black', linewidth=0.5)
     ax.set_xlabel('LASSO标准化系数')
-    ax.set_title(f'LASSO选中的变量（1se准则, {len(selected_features)}个）')
+    ax.set_title(f'LASSO选中的变量（{len(selected_features)}个, λ={selected_alpha:.4f}）')
     ax.grid(True, axis='x', alpha=0.3)
 
     plt.tight_layout()
@@ -306,10 +318,10 @@ def step2_lasso(df, candidate_features):
 # Step 2.5: 向后消去法二次筛选（基于回归p值）
 # ============================================================================
 def step25_backward_elimination(df, lasso_features):
-    """在LASSO基础上，用向后消去法剔除不显著变量（p_remove=0.05）"""
+    """轻量校验：检查LASSO选出的变量是否在回归中保持显著，必要时微调"""
     print("\n" + "=" * 60)
-    print("Step 2.5: 向后消去法（二次筛选）")
-    print("方法: 在LASSO选中的变量上逐步回归，剔除p>0.05的变量")
+    print("Step 2.5: 显著性校验（轻量）")
+    print("说明: LASSO已选出5~10个变量，此步仅验证其回归显著性")
     print("=" * 60)
 
     included = list(lasso_features)
@@ -444,7 +456,7 @@ def main():
     print("=" * 70)
     print("问题1：主要变量筛选")
     print("方案: 问题1gpt.pdf + advanced_preprocessing预处理")
-    print("流程: MICE插补 → 删除日期 → 单因素(p<0.05) → LASSO(1se) → 向后消去(p<0.05) → 回归验证")
+    print("流程: MICE插补 → 单因素(p<0.05) → LASSO(5~10变量) → 回归验证 + VIF")
     print("=" * 70)
     print(f"开始时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -454,14 +466,14 @@ def main():
     # Step 1: 单因素筛选
     candidates = step1_univariate_screening(df)
 
-    # Step 2: LASSO变量压缩（1se准则）
+    # Step 2: LASSO变量选择（正则化路径搜索，自动锁定5~10个变量）
     lasso_selected = step2_lasso(df, candidates)
 
     if len(lasso_selected) == 0:
         print("\nERROR: LASSO未选中任何变量。请检查数据或调整LASSO参数。")
         return
 
-    # Step 2.5: 向后消去法二次筛选
+    # Step 2.5: 显著性校验（LASSO为主，此步仅微调）
     final_features = step25_backward_elimination(df, lasso_selected)
 
     if len(final_features) == 0:
