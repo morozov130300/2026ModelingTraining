@@ -221,6 +221,8 @@ def _ridge_trace_plot(X, y, alphas, best_alpha):
     ax.axvline(x=best_alpha, color='#E74C3C', linestyle='--', linewidth=2,
                alpha=0.8, label=f'最优α={best_alpha:.4f}')
     ax.set_xscale('log')
+    # 用数学文本格式避免Unicode减号(U+2212)的字体缺失警告
+    ax.xaxis.set_major_formatter(plt.ScalarFormatter(useMathText=True))
     ax.set_xlabel(r'正则化参数 $\alpha$ (log尺度)', fontsize=12)
     ax.set_ylabel('标准化回归系数', fontsize=12)
     ax.set_title('岭迹图：正则化强度与系数收缩路径', fontsize=14, fontweight='bold')
@@ -329,7 +331,7 @@ def _rf_importance_plot(imp_df):
 # ============================================================
 # Step 4: 模型对比与可视化
 # ============================================================
-def step4_comparison(ridge_result, rf_result, df):
+def step4_comparison(mlr_result, ridge_result, rf_result, df):
     """对比岭回归（改进后线性模型）vs 随机森林（非线性模型）"""
     print("\n" + "=" * 60)
     print("Step 4: 模型对比 — 岭回归(改进线性) vs 随机森林(非线性)")
@@ -337,13 +339,13 @@ def step4_comparison(ridge_result, rf_result, df):
 
     y = df['glucose'].values
 
-    # 对比表
+    # 对比表（修复：MLR行使用mlr_result的正确值）
     comp_df = pd.DataFrame({
         '模型': ['多元线性回归(MLR)', '岭回归(Ridge)[改进]', '随机森林(RF)'],
-        '$R^2$': [f"{ridge_result['r2']:.4f}", f"{ridge_result['r2']:.4f}", f"{rf_result['r2']:.4f}"],
-        '调整$R^2$': [f"{ridge_result['adj_r2']:.4f}", f"{ridge_result['adj_r2']:.4f}", f"{rf_result['adj_r2']:.4f}"],
-        'RMSE': [f"{ridge_result['rmse']:.4f}", f"{ridge_result['rmse']:.4f}", f"{rf_result['rmse']:.4f}"],
-        'MAE': [f"{ridge_result['mae']:.4f}", f"{ridge_result['mae']:.4f}", f"{rf_result['mae']:.4f}"],
+        '$R^2$': [f"{mlr_result['r2']:.4f}", f"{ridge_result['r2']:.4f}", f"{rf_result['r2']:.4f}"],
+        '调整$R^2$': [f"{mlr_result['adj_r2']:.4f}", f"{ridge_result['adj_r2']:.4f}", f"{rf_result['adj_r2']:.4f}"],
+        'RMSE': [f"{mlr_result['rmse']:.4f}", f"{ridge_result['rmse']:.4f}", f"{rf_result['rmse']:.4f}"],
+        'MAE': [f"{mlr_result['mae']:.4f}", f"{ridge_result['mae']:.4f}", f"{rf_result['mae']:.4f}"],
         '模型角色': ['基础模型', 'MLR+L2改进', '非线性预测'],
     })
 
@@ -394,26 +396,63 @@ def step4_comparison(ridge_result, rf_result, df):
     plt.close()
     print(f"  图表: {FIGURE_DIR}/问题2_模型预测对比图.png")
 
-    # ====== 可视化2: 指标对比柱状图 ======
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    metrics_config = [
-        ('$R^2$', [ridge_result['r2'], rf_result['r2']], ['#2ECC71', '#E74C3C'], True),
-        ('RMSE', [ridge_result['rmse'], rf_result['rmse']], ['#2ECC71', '#E74C3C'], False),
-        ('MAE', [ridge_result['mae'], rf_result['mae']], ['#2ECC71', '#E74C3C'], False),
-    ]
-    for idx, (title, vals, colors, higher_better) in enumerate(metrics_config):
-        ax = axes[idx]
-        names = ['Ridge\n(改进线性)', 'RF\n(非线性)']
-        bars = ax.bar(names, vals, color=colors, alpha=0.85, edgecolor='white', linewidth=1.5, width=0.5)
-        for bar, v in zip(bars, vals):
-            ax.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.002,
-                    f'{v:.4f}', ha='center', va='bottom', fontsize=10, fontweight='bold')
-        ax.set_title(title, fontsize=13, fontweight='bold')
-        ax.grid(True, axis='y', alpha=0.2)
+    # ====== 可视化2: 综合性能雷达图（PDF方案1：归一化三指标合并） ======
+    # 归一化：R²不变（越大越好），RMSE/MAE转为得分（越大越好）
+    models_radar = {
+        'MLR\n(基础)': {
+            'R²': mlr_result['r2'],
+            'RMSE得分': 1 - mlr_result['rmse'] / max(mlr_result['rmse'], ridge_result['rmse'], rf_result['rmse']),
+            'MAE得分': 1 - mlr_result['mae'] / max(mlr_result['mae'], ridge_result['mae'], rf_result['mae']),
+            '可解释性': 1.0,
+        },
+        'Ridge\n(L2改进)': {
+            'R²': ridge_result['r2'],
+            'RMSE得分': 1 - ridge_result['rmse'] / max(mlr_result['rmse'], ridge_result['rmse'], rf_result['rmse']),
+            'MAE得分': 1 - ridge_result['mae'] / max(mlr_result['mae'], ridge_result['mae'], rf_result['mae']),
+            '可解释性': 0.8,
+        },
+        'RF\n(非线性)': {
+            'R²': rf_result['r2'],
+            'RMSE得分': 1 - rf_result['rmse'] / max(mlr_result['rmse'], ridge_result['rmse'], rf_result['rmse']),
+            'MAE得分': 1 - rf_result['mae'] / max(mlr_result['mae'], ridge_result['mae'], rf_result['mae']),
+            '可解释性': 0.3,
+        },
+    }
+    categories = ['R²', 'RMSE得分', 'MAE得分', '可解释性']
+    n_cat = len(categories)
+    angles = np.linspace(0, 2 * np.pi, n_cat, endpoint=False).tolist()
+    angles += angles[:1]  # 闭合
+
+    colors_radar = {'MLR\n(基础)': '#85C1E9', 'Ridge\n(L2改进)': '#52BE80', 'RF\n(非线性)': '#F39C12'}
+
+    fig, ax = plt.subplots(figsize=(9, 9), subplot_kw=dict(polar=True))
+    for name, metrics in models_radar.items():
+        values = [metrics[cat] for cat in categories] + [metrics[categories[0]]]
+        ax.plot(angles, values, 'o-', linewidth=2, label=name, color=colors_radar[name], markersize=6)
+        ax.fill(angles, values, alpha=0.1, color=colors_radar[name])
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(categories, fontsize=12, fontweight='bold')
+    ax.set_ylim(0, 1.05)
+    ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
+    ax.set_yticklabels(['0.2', '0.4', '0.6', '0.8', '1.0'], fontsize=9, color='gray')
+    ax.set_title('模型综合性能雷达图', fontsize=15, fontweight='bold', pad=25)
+    ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=11, framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+
+    # 标注实际数值
+    for name, metrics in models_radar.items():
+        # 在R²轴上方标注实际R²值
+        r2_val = metrics['R²']
+        angle_r2 = angles[0]
+        ax.annotate(f'{r2_val:.3f}', xy=(angle_r2, r2_val + 0.08),
+                    ha='center', va='bottom', fontsize=8, color=colors_radar[name],
+                    fontweight='bold')
+
     plt.tight_layout()
     plt.savefig(f'{FIGURE_DIR}/问题2_模型指标对比.png', dpi=200, bbox_inches='tight')
     plt.close()
-    print(f"  图表: {FIGURE_DIR}/问题2_模型指标对比.png")
+    print(f"  图表: {FIGURE_DIR}/问题2_模型指标对比.png (雷达图)")
 
     # ====== 可视化3: 残差分析 — 小提琴图+散点图（Ridge + RF 合并） ======
     fig, ax = plt.subplots(figsize=(12, 7))
@@ -511,7 +550,7 @@ def main():
     rf_result = step3_rf(df)
 
     # Step 4: 模型对比
-    comp_df, best_name, best_r2 = step4_comparison(ridge_result, rf_result, df)
+    comp_df, best_name, best_r2 = step4_comparison(mlr_result, ridge_result, rf_result, df)
 
     # 最终输出
     elapsed = (datetime.datetime.now() - start_time).total_seconds()
