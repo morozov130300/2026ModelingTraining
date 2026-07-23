@@ -40,7 +40,19 @@ except ImportError:
     from scipy.integrate import trapezoid as trapz
 import matplotlib
 matplotlib.use('Agg')  # 非交互模式，用于服务器环境
+# 中文字体配置
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+_chinese_fonts = ['SimHei', 'Microsoft YaHei', 'SimSun', 'WenQuanYi Micro Hei',
+                   'Noto Sans CJK SC', 'PingFang SC', 'Heiti SC', 'DengXian']
+for f in _chinese_fonts:
+    try:
+        fm.findfont(f, fallback_to_default=False)
+        plt.rcParams['font.sans-serif'] = [f] + plt.rcParams['font.sans-serif']
+        break
+    except Exception:
+        continue
+plt.rcParams['axes.unicode_minus'] = False
 import seaborn as sns
 import statsmodels.api as sm
 import statsmodels.formula.api as smf

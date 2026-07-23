@@ -26,7 +26,24 @@ import pandas as pd
 from scipy import stats
 import matplotlib
 matplotlib.use('Agg')
+# 中文字体配置（按优先级尝试多个常见字体）
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+_chinese_fonts = ['SimHei', 'Microsoft YaHei', 'SimSun', 'WenQuanYi Micro Hei',
+                   'Noto Sans CJK SC', 'PingFang SC', 'Heiti SC', 'DengXian']
+_chosen = None
+for f in _chinese_fonts:
+    try:
+        fm.findfont(f, fallback_to_default=False)
+        _chosen = f
+        break
+    except Exception:
+        continue
+if _chosen:
+    plt.rcParams['font.sans-serif'] = [_chosen] + plt.rcParams['font.sans-serif']
+else:
+    plt.rcParams['font.sans-serif'] = ['SimHei'] + plt.rcParams['font.sans-serif']
+plt.rcParams['axes.unicode_minus'] = False
 import seaborn as sns
 import statsmodels.api as sm
 from statsmodels.stats.outliers_influence import variance_inflation_factor
