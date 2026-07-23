@@ -26,12 +26,6 @@ venv/
 env/
 VENV/
 
-# Generated figures
-figures/
-
-# Generated tables (CSV outputs)
-output/*.csv
-
 # IDE
 .vscode/
 .idea/
@@ -41,10 +35,6 @@ output/*.csv
 # OS
 .DS_Store
 Thumbs.db
-
-# Runtime logs
-终端运行结果.txt
-*.log
 
 # BitFun artifacts
 .arts/
