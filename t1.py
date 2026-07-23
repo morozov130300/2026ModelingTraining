@@ -151,27 +151,79 @@ def step1_univariate_screening(df):
     print(passed[['中文名', '类型', 'Pearson_r', 'Pearson_p']].head(15).to_string(index=False))
     print(f"\n  未通过的特征: {[r['中文名'] for _, r in result_df.iterrows() if r['Pearson_p'] >= P_THRESHOLD]}")
 
-    # 可视化
-    fig, ax = plt.subplots(figsize=(12, 7))
+    # 可视化：单因素相关性分析图
+    fig, ax = plt.subplots(figsize=(13, 8))
+
+    # 给每个特征标上颜色（按生理系统分组）
+    group_colors = {
+        '基本信息': '#E74C3C', '肝功能': '#2ECC71', '肾功能': '#3498DB',
+        '血脂': '#F39C12', '乙肝': '#9B59B6', '乙肝缺失标记': '#BDC3C7',
+        '血常规': '#1ABC9C',
+    }
+    # 为每个特征分配组别
+    feature_group = {}
+    for grp, cols in VAR_GROUPS.items():
+        for c in cols:
+            feature_group[c] = grp
+    # special cols not in VAR_GROUPS
+    for c in df.columns:
+        if c != 'glucose' and c not in feature_group:
+            feature_group[c] = '其他'
+
     plot_df = result_df.sort_values('Pearson_r')
-    colors = ['#e74c3c' if r > 0 else '#3498db' for r in plot_df['Pearson_r']]
+    bar_colors = []
+    for _, row in plot_df.iterrows():
+        col = row['特征']
+        grp = feature_group.get(col, '其他')
+        bar_colors.append(group_colors.get(grp, '#95A5A6'))
+
     bars = ax.barh(range(len(plot_df)), plot_df['Pearson_r'],
-                   color=colors, alpha=1.0)
-    # 逐一设置透明度（alpha不支持列表，需逐bar设置）
+                   color=bar_colors, alpha=0.85, edgecolor='white', linewidth=0.5)
+    # 淡化未通过的特征
     for i, (_, row) in enumerate(plot_df.iterrows()):
         if row['Pearson_p'] >= P_THRESHOLD:
-            bars[i].set_alpha(0.25)
-            ax.text(0, i, ' ✗ p≥0.05', va='center', fontsize=7, color='gray')
+            bars[i].set_alpha(0.2)
+            ax.text(0.01, i, '✗ 未通过(p≥0.05)', va='center', fontsize=7,
+                    color='#7F8C8D')
+
+    # 在柱状条上标注相关系数
+    for i, (_, row) in enumerate(plot_df.iterrows()):
+        r = row['Pearson_r']
+        label = f"r={r:.3f}"
+        ax.text(r + 0.003 if r >= 0 else r - 0.04, i, label,
+                va='center', fontsize=7, color='#2C3E50')
 
     ax.set_yticks(range(len(plot_df)))
-    ax.set_yticklabels(plot_df['中文名'], fontsize=8)
-    ax.axvline(0, color='black', linewidth=0.5)
-    ax.set_xlabel('Pearson 相关系数')
-    ax.set_title(f'与血糖的单因素相关性分析（深色=p<{P_THRESHOLD}，浅色=未通过）')
+    ax.set_yticklabels(plot_df['中文名'], fontsize=9)
+    ax.axvline(0, color='#2C3E50', linewidth=1)
+    ax.set_xlabel('Pearson 相关系数（r）', fontsize=12)
+    ax.set_title('与血糖的单因素相关性分析', fontsize=14, fontweight='bold')
+    # 添加图例
+    from matplotlib.patches import Patch
+    legend_elements = [Patch(facecolor=c, alpha=0.85, label=grp)
+                       for grp, c in group_colors.items()
+                       if any(feature_group.get(c2) == grp for _, c2 in plot_df['特征'].items())]
+    # 只显示实际出现的分组
+    present_groups = set()
+    for _, row in plot_df.iterrows():
+        grp = feature_group.get(row['特征'], '其他')
+        present_groups.add(grp)
+    legend_elements = [Patch(facecolor=c, alpha=0.85, label=grp)
+                       for grp, c in group_colors.items()
+                       if grp in present_groups]
+    ax.legend(handles=legend_elements, fontsize=8, loc='lower right',
+              title='生理系统', title_fontsize=9)
+    ax.grid(True, axis='x', alpha=0.3, linestyle='--')
+
+    # 标注显著性区间
+    ax.text(0.98, 0.95, f'通过筛选: {len(passed)}/44 个 (p<{P_THRESHOLD})',
+            transform=ax.transAxes, fontsize=9, ha='right', va='top',
+            bbox=dict(boxstyle='round', facecolor='#E8F8F5', alpha=0.8))
+
     plt.tight_layout()
-    plt.savefig(f'{FIGURE_DIR}/问题1_单因素筛选.png', dpi=200, bbox_inches='tight')
+    plt.savefig(f'{FIGURE_DIR}/问题1_单因素相关性分析.png', dpi=200, bbox_inches='tight')
     plt.close()
-    print(f"\n  图表: {FIGURE_DIR}/问题1_单因素筛选.png")
+    print(f"\n  图表: {FIGURE_DIR}/问题1_单因素相关性分析.png")
 
     return passed['特征'].tolist()
 
@@ -272,24 +324,42 @@ def step2_lasso(df, candidate_features):
             print(f"  {f:30s} ({col_map_reverse.get(f, f):12s})  系数={coef_val:+.6f}")
 
     # 保存LASSO路径图
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-    # 左图：变量数随λ的变化
+    # ====== 左图：正则化路径 ======
     ax = axes[0]
-    ax.plot(np.log10(alphas_path), n_nonzero, 'b-', linewidth=2)
-    ax.axhline(target_min, color='green', linestyle='--', alpha=0.5, label=f'目标下限={target_min}')
-    ax.axhline(target_max, color='green', linestyle='--', alpha=0.5, label=f'目标上限={target_max}')
-    ax.axvline(np.log10(selected_alpha), color='darkred', linestyle='-', linewidth=2,
-               label=f'选中λ=10^{np.log10(selected_alpha):.2f} ({selected_count}个变量)')
-    ax.fill_between(np.log10(alphas_path), target_min, target_max,
-                    alpha=0.1, color='green')
-    ax.set_xlabel('log10(λ)')
-    ax.set_ylabel('非零系数个数')
-    ax.set_title('LASSO正则化路径（变量数 vs λ）')
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
+    # 绘制变量系数路径（显示全部32条）
+    cmap = plt.cm.viridis
+    for j in range(coefs_path.shape[0]):
+        ax.plot(np.log10(alphas_path), coefs_path[j, :],
+                color=cmap(j / coefs_path.shape[0]), alpha=0.6, linewidth=0.8)
 
-    # 右图：选中变量的系数
+    # 标注非零系数个数
+    ax_twin = ax.twinx()
+    ax_twin.plot(np.log10(alphas_path), n_nonzero, 'k-', linewidth=2.5, alpha=0.7)
+    ax_twin.fill_between(np.log10(alphas_path), 0, n_nonzero, color='black', alpha=0.08)
+    ax_twin.set_ylabel('非零系数个数', fontsize=11, color='black')
+
+    # 目标区间标注
+    ax_twin.axhspan(target_min, target_max, xmin=0, xmax=1,
+                    alpha=0.15, color='#2ECC71')
+    ax_twin.axhline(target_min, color='#2ECC71', linestyle='--', alpha=0.6, linewidth=1)
+    ax_twin.axhline(target_max, color='#2ECC71', linestyle='--', alpha=0.6, linewidth=1,
+                    label=f'目标区间[{target_min},{target_max}]')
+    # 选中点
+    ax.axvline(np.log10(selected_alpha), color='#E74C3C', linestyle='-', linewidth=2.5)
+    ax.annotate(f'选中: λ={selected_alpha:.4f}\n{selected_count}个变量',
+                xy=(np.log10(selected_alpha), 1), fontsize=10,
+                color='#E74C3C', fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='#FDEDEC', alpha=0.9))
+
+    ax.set_xlabel('log10(λ)', fontsize=12)
+    ax.set_ylabel('回归系数', fontsize=11)
+    ax.set_title('LASSO正则化路径', fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.2, linestyle='--')
+    ax_twin.legend(fontsize=8, loc='upper right')
+
+    # ====== 右图：选中变量的系数 ======
     ax = axes[1]
     coef_df = pd.DataFrame({
         '特征': selected_features,
@@ -297,19 +367,29 @@ def step2_lasso(df, candidate_features):
         '标准化系数': [lasso_final.coef_[candidate_features.index(f)] for f in selected_features]
     }).sort_values('标准化系数', ascending=True)
 
-    colors = ['#e74c3c' if c > 0 else '#3498db' for c in coef_df['标准化系数']]
-    ax.barh(range(len(coef_df)), coef_df['标准化系数'], color=colors, alpha=0.8)
+    colors_bar = ['#E74C3C' if c > 0 else '#3498DB' for c in coef_df['标准化系数']]
+    bars = ax.barh(range(len(coef_df)), coef_df['标准化系数'],
+                   color=colors_bar, alpha=0.85, edgecolor='white', linewidth=0.8)
+
+    # 在柱上标注数值
+    for i, (_, row) in enumerate(coef_df.iterrows()):
+        v = row['标准化系数']
+        label = f"{v:+.3f}"
+        ax.text(v + 0.02 if v >= 0 else v - 0.12, i, label,
+                va='center', fontsize=9, color='#2C3E50', fontweight='bold')
+
     ax.set_yticks(range(len(coef_df)))
-    ax.set_yticklabels(coef_df['中文名'], fontsize=9)
-    ax.axvline(0, color='black', linewidth=0.5)
-    ax.set_xlabel('LASSO标准化系数')
-    ax.set_title(f'LASSO选中的变量（{len(selected_features)}个, λ={selected_alpha:.4f}）')
-    ax.grid(True, axis='x', alpha=0.3)
+    ax.set_yticklabels(coef_df['中文名'], fontsize=10)
+    ax.axvline(0, color='#2C3E50', linewidth=1.2)
+    ax.set_xlabel('LASSO标准化系数', fontsize=12)
+    ax.set_title(f'最终选中变量（{len(selected_features)}个, λ={selected_alpha:.4f}）',
+                 fontsize=14, fontweight='bold')
+    ax.grid(True, axis='x', alpha=0.3, linestyle='--')
 
     plt.tight_layout()
-    plt.savefig(f'{FIGURE_DIR}/问题1_LASSO结果.png', dpi=200, bbox_inches='tight')
+    plt.savefig(f'{FIGURE_DIR}/问题1_LASSO正则化路径.png', dpi=200, bbox_inches='tight')
     plt.close()
-    print(f"\n  图表: {FIGURE_DIR}/问题1_LASSO结果.png")
+    print(f"\n  图表: {FIGURE_DIR}/问题1_LASSO正则化路径.png")
 
     return selected_features
 
@@ -364,7 +444,7 @@ def step25_backward_elimination(df, lasso_features):
 # Step 3: VIF多重共线性诊断（PDF Step 4的一部分）
 # ============================================================================
 def step3_vif(df, selected_features):
-    """VIF多重共线性诊断"""
+    """VIF多重共线性诊断 + 可视化"""
     print("\n" + "=" * 60)
     print("Step 3: VIF多重共线性诊断")
     print("=" * 60)
@@ -390,6 +470,48 @@ def step3_vif(df, selected_features):
         print("\n所有变量VIF<10，不存在严重共线性。")
 
     vif_data.to_csv(f'{OUTPUT_DIR}/问题1_VIF分析.csv', index=False, encoding='utf-8-sig')
+
+    # VIF可视化
+    fig, ax = plt.subplots(figsize=(10, max(4, len(vif_data) * 0.35)))
+
+    plot_df = vif_data.copy()
+    # 避免极端值影响可视化，VIF截断显示
+    plot_df['VIF_display'] = plot_df['VIF'].clip(upper=50)
+    plot_df['is_high'] = plot_df['VIF'] > 10
+
+    bar_colors = ['#E74C3C' if h else '#3498DB' for h in plot_df['is_high']]
+    bars = ax.barh(range(len(plot_df)), plot_df['VIF_display'],
+                   color=bar_colors, alpha=0.8, edgecolor='white', linewidth=0.5)
+
+    ax.axvline(10, color='#E74C3C', linestyle='--', linewidth=1.5, alpha=0.7,
+               label='VIF=10（共线性警戒线）')
+
+    # 标注实际VIF值
+    for i, (_, row) in enumerate(plot_df.iterrows()):
+        v = row['VIF']
+        label = f"{v:.1f}"
+        if v > 50:
+            label += ' (严重)'
+        ax.text(min(v, 50) + 0.5, i, label, va='center', fontsize=8, color='#2C3E50')
+
+    ax.set_yticks(range(len(plot_df)))
+    ax.set_yticklabels(plot_df['中文名'], fontsize=9)
+    ax.set_xlabel('方差膨胀因子（VIF）', fontsize=12)
+    ax.set_title('多重共线性诊断（VIF）', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=8, loc='lower right')
+    ax.grid(True, axis='x', alpha=0.3, linestyle='--')
+
+    # 标注解释
+    high_count = plot_df['is_high'].sum()
+    ax.text(0.98, 0.95, f'VIF>10: {high_count}/{len(plot_df)} 个',
+            transform=ax.transAxes, fontsize=10, ha='right', va='top',
+            bbox=dict(boxstyle='round', facecolor='#FDEDEC', alpha=0.8))
+
+    plt.tight_layout()
+    plt.savefig(f'{FIGURE_DIR}/问题1_VIF共线性诊断.png', dpi=200, bbox_inches='tight')
+    plt.close()
+    print(f"  图表: {FIGURE_DIR}/问题1_VIF共线性诊断.png")
+
     return vif_data
 
 
@@ -427,24 +549,122 @@ def step4_regression_validation(df, selected_features):
     coef_table.to_csv(f'{OUTPUT_DIR}/问题1_最终回归系数.csv', index=False, encoding='utf-8-sig')
     print(f"\n系数表已保存: {OUTPUT_DIR}/问题1_最终回归系数.csv")
 
-    # 森林图
+    # 森林图（回归系数及95%置信区间）
     plot_df = coef_table[coef_table['变量'] != 'const'].copy()
-    fig, ax = plt.subplots(figsize=(10, max(5, len(plot_df) * 0.4)))
+    plot_df = plot_df.sort_values('系数(B)')
+
+    fig, ax = plt.subplots(figsize=(11, max(5, len(plot_df) * 0.45)))
+
     y_pos = range(len(plot_df))
+    # 标记显著与否的颜色
+    point_colors = ['#2ECC71' if p < 0.05 else '#BDC3C7' for p in plot_df['p值']]
     ax.errorbar(plot_df['系数(B)'], y_pos,
                 xerr=[(plot_df['系数(B)'] - plot_df['95%CI_lower']),
                       (plot_df['95%CI_upper'] - plot_df['系数(B)'])],
-                fmt='o', capsize=3, markersize=7)
-    ax.axvline(0, color='gray', linestyle='--', alpha=0.5)
+                fmt='o', capsize=4, markersize=9, color='#2C3E50',
+                markerfacecolor=point_colors, markeredgecolor='#2C3E50', markeredgewidth=1,
+                ecolor='#7F8C8D', elinewidth=1.5)
+
+    # 标注p值
+    for i, (_, row) in enumerate(plot_df.iterrows()):
+        p = row['p值']
+        if p < 0.001:
+            p_label = '***'
+        elif p < 0.01:
+            p_label = '**'
+        elif p < 0.05:
+            p_label = '*'
+        else:
+            p_label = 'n.s.'
+        ax.text(row['95%CI_upper'] + 0.02, i, p_label, va='center', fontsize=9,
+                color='#E74C3C' if p < 0.05 else '#95A5A6', fontweight='bold')
+
+    ax.axvline(0, color='#2C3E50', linestyle='--', alpha=0.5, linewidth=1)
     ax.set_yticks(list(y_pos))
-    ax.set_yticklabels(plot_df['中文名'])
-    ax.set_xlabel('回归系数 (95% CI)')
-    ax.set_title('最终变量回归系数及置信区间')
-    ax.grid(True, axis='x', alpha=0.3)
+    ax.set_yticklabels(plot_df['中文名'], fontsize=10)
+    ax.set_xlabel('回归系数 (95% 置信区间)', fontsize=12)
+    ax.set_title('最终变量回归系数及置信区间', fontsize=14, fontweight='bold')
+
+    # R²标注
+    r2_text = f'R² = {model.rsquared:.3f}   调整R² = {model.rsquared_adj:.3f}'
+    ax.text(0.98, 0.02, r2_text, transform=ax.transAxes, fontsize=10,
+            ha='right', va='bottom', bbox=dict(boxstyle='round', facecolor='#EBF5FB', alpha=0.8))
+
+    # 显著性标注说明
+    ax.text(0.98, 0.92, '* p<0.05  ** p<0.01  *** p<0.001',
+            transform=ax.transAxes, fontsize=8, ha='right', va='top',
+            color='#7F8C8D')
+
+    ax.grid(True, axis='x', alpha=0.3, linestyle='--')
     plt.tight_layout()
-    plt.savefig(f'{FIGURE_DIR}/问题1_回归系数森林图.png', dpi=200, bbox_inches='tight')
+    plt.savefig(f'{FIGURE_DIR}/问题1_最终回归系数森林图.png', dpi=200, bbox_inches='tight')
     plt.close()
-    print(f"  图表: {FIGURE_DIR}/问题1_回归系数森林图.png")
+    print(f"  图表: {FIGURE_DIR}/问题1_最终回归系数森林图.png")
+
+    # 模型诊断图（残差分析）
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    residuals = model.resid
+    fitted = model.fittedvalues
+    standardized_resid = residuals / np.std(residuals)
+
+    # 1. 残差 vs 拟合值
+    ax = axes[0, 0]
+    ax.scatter(fitted, residuals, alpha=0.3, s=10, color='#3498DB')
+    ax.axhline(y=0, color='#E74C3C', linestyle='--', linewidth=1.5)
+    # 平滑趋势线
+    from scipy.interpolate import UnivariateSpline
+    try:
+        sort_idx = np.argsort(fitted)
+        spline = UnivariateSpline(fitted[sort_idx], residuals[sort_idx], s=len(fitted)*10)
+        ax.plot(fitted[sort_idx], spline(fitted[sort_idx]), color='#E74C3C', linewidth=2, alpha=0.7)
+    except Exception:
+        pass
+    ax.set_xlabel('拟合值', fontsize=11)
+    ax.set_ylabel('残差', fontsize=11)
+    ax.set_title('残差 vs 拟合值', fontsize=13, fontweight='bold')
+    ax.grid(True, alpha=0.2, linestyle='--')
+
+    # 2. Q-Q图
+    ax = axes[0, 1]
+    stats.probplot(residuals, dist="norm", plot=ax)
+    ax.get_lines()[0].set_markerfacecolor('#3498DB')
+    ax.get_lines()[0].set_markersize(4)
+    ax.get_lines()[0].set_alpha(0.4)
+    ax.get_lines()[1].set_color('#E74C3C')
+    ax.get_lines()[1].set_linewidth(2)
+    ax.set_title('正态性Q-Q图', fontsize=13, fontweight='bold')
+    ax.grid(True, alpha=0.2, linestyle='--')
+
+    # 3. 残差直方图
+    ax = axes[1, 0]
+    ax.hist(residuals, bins=40, edgecolor='white', alpha=0.7, color='#3498DB')
+    # 叠加正态曲线
+    from scipy.stats import norm
+    x_range = np.linspace(residuals.min(), residuals.max(), 100)
+    ax.plot(x_range, len(residuals) * np.diff(np.histogram(residuals, bins=40)[1])[0]
+            * norm.pdf(x_range, residuals.mean(), residuals.std()),
+            color='#E74C3C', linewidth=2, alpha=0.7)
+    ax.set_xlabel('残差', fontsize=11)
+    ax.set_ylabel('频数', fontsize=11)
+    ax.set_title('残差分布', fontsize=13, fontweight='bold')
+    ax.grid(True, alpha=0.2, linestyle='--')
+
+    # 4. 标准化残差 vs 拟合值
+    ax = axes[1, 1]
+    ax.scatter(fitted, standardized_resid, alpha=0.3, s=10, color='#3498DB')
+    ax.axhline(y=0, color='#E74C3C', linestyle='--', linewidth=1.5)
+    ax.axhline(y=3, color='#95A5A6', linestyle=':', alpha=0.7, label='±3σ')
+    ax.axhline(y=-3, color='#95A5A6', linestyle=':', alpha=0.7)
+    ax.set_xlabel('拟合值', fontsize=11)
+    ax.set_ylabel('标准化残差', fontsize=11)
+    ax.set_title('标准化残差 vs 拟合值', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.2, linestyle='--')
+
+    plt.tight_layout()
+    plt.savefig(f'{FIGURE_DIR}/问题1_模型诊断图.png', dpi=200, bbox_inches='tight')
+    plt.close()
+    print(f"  图表: {FIGURE_DIR}/问题1_模型诊断图.png")
 
     return model
 
@@ -485,6 +705,35 @@ def main():
 
     # Step 4: 多元回归验证
     model = step4_regression_validation(df, final_features)
+
+    # 最终变量相关性热力图
+    if len(final_features) >= 3:
+        print("\n" + "=" * 60)
+        print("生成最终变量相关性热力图")
+        print("=" * 60)
+        corr_cols = final_features + ['glucose']
+        corr_data = df[corr_cols].copy()
+        corr_matrix = corr_data.corr()
+
+        # 中文标签映射
+        corr_labels = [col_map_reverse.get(c, c) for c in corr_matrix.columns]
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+        mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+        cmap = sns.diverging_palette(240, 10, as_cmap=True)
+        sns.heatmap(corr_matrix, mask=mask, cmap=cmap, center=0,
+                    annot=True, fmt='.2f', square=True,
+                    linewidths=0.8, cbar_kws={"shrink": 0.8},
+                    xticklabels=corr_labels, yticklabels=corr_labels,
+                    ax=ax)
+
+        ax.set_title('最终变量与血糖的相关性热力图', fontsize=14, fontweight='bold', pad=15)
+        plt.xticks(rotation=45, ha='right', fontsize=9)
+        plt.yticks(rotation=0, fontsize=9)
+        plt.tight_layout()
+        plt.savefig(f'{FIGURE_DIR}/问题1_最终变量相关性热力图.png', dpi=200, bbox_inches='tight')
+        plt.close()
+        print(f"  图表: {FIGURE_DIR}/问题1_最终变量相关性热力图.png")
 
     print("\n" + "=" * 70)
     print(f"问题1分析完成！")
