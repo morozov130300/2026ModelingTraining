@@ -369,11 +369,19 @@ def step4_comparison(ridge_result, rf_result, df):
     for idx, (name, pred, color) in enumerate(models_data):
         ax = axes[idx]
         ax.scatter(y, pred, alpha=0.35, s=10, c=color, edgecolors='white', linewidth=0.3)
-        lims = [min(y.min(), pred.min()) - 0.5, max(y.max(), pred.max()) + 0.5]
+        # 用百分位数确定坐标轴范围（排除极端离群点的干扰）
+        combined = np.concatenate([y, pred])
+        lo = np.percentile(combined, 0.5)
+        hi = np.percentile(combined, 99.5)
+        lims = [lo - 0.3, hi + 0.3]
         ax.plot(lims, lims, 'k--', alpha=0.6, linewidth=1.5)
         r2 = r2_score(y, pred)
         rmse = np.sqrt(mean_squared_error(y, pred))
         ax.set_xlim(lims); ax.set_ylim(lims)
+        ax.set_xticks(np.arange(np.floor(lo), np.ceil(hi) + 0.5, 1.0))
+        ax.set_yticks(np.arange(np.floor(lo), np.ceil(hi) + 0.5, 1.0))
+        ax.xaxis.set_major_formatter(plt.FormatStrFormatter('%.1f'))
+        ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.1f'))
         ax.set_xlabel('真实血糖值 (mmol/L)', fontsize=11)
         ax.set_ylabel('预测血糖值 (mmol/L)', fontsize=11)
         ax.set_title(name, fontsize=12, fontweight='bold')
@@ -428,6 +436,15 @@ def step4_comparison(ridge_result, rf_result, df):
         ax = axes[1, idx]
         ax.scatter(pred, residuals, alpha=0.35, s=10, c=color, edgecolors='white')
         ax.axhline(0, color='black', linestyle='--', linewidth=1)
+        # 用百分位数截断离群值，聚焦主要数据区域
+        pred_lo = np.percentile(pred, 0.5)
+        pred_hi = np.percentile(pred, 99.5)
+        res_lo = np.percentile(residuals, 0.5)
+        res_hi = np.percentile(residuals, 99.5)
+        ax.set_xlim(pred_lo - 0.3, pred_hi + 0.3)
+        ax.set_ylim(res_lo - 0.3, res_hi + 0.3)
+        ax.xaxis.set_major_locator(plt.MultipleLocator(1.0))
+        ax.yaxis.set_major_locator(plt.MultipleLocator(1.0))
         ax.set_xlabel('预测值', fontsize=10); ax.set_ylabel('残差', fontsize=10)
         ax.set_title(f'{name} 残差vs预测值', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.2)
