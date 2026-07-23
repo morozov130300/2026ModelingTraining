@@ -146,7 +146,7 @@ def _apply_font_figure(fig, tick_size=9):
                     txt.set_fontproperties(fm.FontProperties(fname=_cn_font_path, size=8) if _cn_font_path else None)
 
 # 图片输出目录
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "问题1")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 

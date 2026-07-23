@@ -18,7 +18,7 @@ if not _CN_FP:
         if any(k in _f.name for k in ["YaHei","SimHei","PingFang"]):
             _CN_FP = fm.FontProperties(family=_f.name); _CN_FP.set_size(9); break
 plt.rcParams["font.family"] = "sans-serif"; plt.rcParams["axes.unicode_minus"] = False
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "问题2")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 from 数据预处理 import load_and_rename, impute_median, EN2CN, TARGET, CSV1
 FINAL_VARS = ["年龄","TG","RBC","MCHC","HGB","ALT","性别"]
