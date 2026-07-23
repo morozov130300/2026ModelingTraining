@@ -1,17 +1,57 @@
-figures/
-output/*.csv
-output/*.pdf
-output/问题1gpt_文本内容.txt
-extract_pdf.rb
+# Python
 __pycache__/
-*.pyc
-.DS_Store
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-.bitfun/
-.arts/
-*.log
-output/*.md
+# Virtual environments
+.venv/
+venv/
+env/
+VENV/
+
+# Generated figures
+figures/
+
+# Generated tables (CSV outputs)
+output/*.csv
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime logs
+终端运行结果.txt
+*.log
+
+# BitFun artifacts
+.arts/
+.bitfun/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# pyright
+pyrightconfig.json
