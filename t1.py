@@ -34,8 +34,21 @@ from 数据预处理 import (
 SEP = "=" * 72
 SEP2 = "-" * 60
 
-# 可视化设置
-plt.rcParams["font.family"] = "SimHei, Microsoft YaHei, WenQuanYi Micro Hei, DejaVu Sans"
+# 可视化设置 — 自动检测中文字体
+import matplotlib.font_manager as fm
+_chinese_fonts = [f.name for f in fm.fontManager.ttflist
+                  if any(k in f.name for k in ["SimHei", "YaHei", "Hei", "WenQuanYi",
+                                                "Noto Sans CJK", "Source Han",
+                                                "Microsoft YaHei", "Microsoft JhengHei",
+                                                "FangSong", "KaiTi", "NSimSun",
+                                                "DengXian", "STSong", "STHeiti",
+                                                "STKaiti"])]
+if _chinese_fonts:
+    plt.rcParams["font.sans-serif"] = _chinese_fonts[:1] + plt.rcParams.get("font.sans-serif", [])
+else:
+    # 兜底：常见中文字体名
+    plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "WenQuanYi Micro Hei",
+                                        "Noto Sans CJK SC", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 plt.rcParams["figure.dpi"] = 150
 plt.rcParams["savefig.dpi"] = 300
