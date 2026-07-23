@@ -9,7 +9,6 @@ __pycache__/
 
 .bitfun/
 .arts/
-终端运行结果.txt
 *.log
 output/*.md
 .vscode/

@@ -1,0 +1,163 @@
+PS Microsoft.PowerShell.Core\FileSystem::\\HwFs\HMOS_共享文件夹\Project> & C:/Users/OseasyVM/AppData/Local/Programs/Python/Python312/python.exe //HwFs/HMOS_共享文件夹/Project/t1.py
+======================================================================
+问题1：主要变量筛选
+方案: 问题1gpt.pdf + advanced_preprocessing预处理
+流程: MICE插补 → 删除日期 → 单因素(p<0.05) → LASSO → 回归验证
+======================================================================
+开始时间: 2026-07-23 09:40:47
+============================================================
+Step 0: 数据加载与预处理
+   - MICE多重插补（advanced_preprocessing）
+   - 删除日期衍生变量（PDF要求）
+   - 保留乙肝缺失指示变量（用于综合判断）
+============================================================
+
+============================================================
+  高级数据预处理模块
+  缺失值处理策略: MICE(iter=20)
+============================================================
+============================================================
+基础数据加载与清洗
+============================================================
+附件1: (5905, 42), 附件2: (141, 41)
+清洗后: 附件1 (5905, 42), 附件2 (141, 41)
+
+--- 插补前缺失诊断 ---
+
+附件1缺失情况:
+列名                     缺失数      缺失率
+----------------------------------------
+HBsAg                  4493     76.09  %
+HBeAb                  4493     76.09  %
+HBeAg                  4493     76.09  %
+HBcAb                  4493     76.09  %
+HBsAb                  4493     76.09  %
+UA                     1387     23.49  %
+BUN                    1387     23.49  %
+Cr                     1387     23.49  %
+ALB                    1234     20.90  %
+AGR                    1234     20.90  %
+ALT                    1234     20.90  %
+GGT                    1234     20.90  %
+ALP                    1234     20.90  %
+GLOB                   1234     20.90  %
+TP                     1234     20.90  %
+AST                    1234     20.90  %
+LDL_C                  1227     20.78  %
+HDL_C                  1227     20.78  %
+TC                     1227     20.78  %
+TG                     1227     20.78  %
+PDW                    27       0.46   %
+PCT                    27       0.46   %
+MPV                    27       0.46   %
+HGB                    20       0.34   %
+PLT                    20       0.34   %
+MCH                    20       0.34   %
+RBC                    20       0.34   %
+LYMPH_pct              20       0.34   %
+MCHC                   20       0.34   %
+MCV                    20       0.34   %
+HCT                    20       0.34   %
+RDW                    20       0.34   %
+WBC                    20       0.34   %
+EO_pct                 20       0.34   %
+BASO_pct               20       0.34   %
+MONO_pct               20       0.34   %
+NEUT_pct               20       0.34   %
+gender_male            1        0.02   %
+
+附件2缺失情况:
+列名                     缺失数      缺失率
+----------------------------------------
+HBcAb                  106      75.18  %
+HBeAb                  106      75.18  %
+HBeAg                  106      75.18  %
+HBsAb                  106      75.18  %
+HBsAg                  106      75.18  %
+UA                     31       21.99  %
+Cr                     31       21.99  %
+BUN                    31       21.99  %
+ALT                    23       16.31  %
+AST                    23       16.31  %
+AGR                    23       16.31  %
+GLOB                   23       16.31  %
+ALB                    23       16.31  %
+TP                     23       16.31  %
+GGT                    23       16.31  %
+ALP                    23       16.31  %
+TC                     22       15.60  %
+LDL_C                  22       15.60  %
+TG                     22       15.60  %
+HDL_C                  22       15.60  %
+
+>>> 执行MICE插补(max_iter=20)...
+  附件1: 缺失率>50%直接中位数填充: ['HBeAb', 'HBeAg', 'HBcAb', 'HBsAb', 'HBsAg']
+  附件1: MICE完成 (迭代14次, 19303->0个NaN)
+  附件2: 缺失率>50%直接中位数填充: ['HBsAg', 'HBsAb', 'HBeAg', 'HBeAb', 'HBcAb']
+  附件2: MICE完成 (迭代12次, 365->0个NaN)
+
+--- 最终检查 ---
+  附件1: (5905, 47), NaN残留: 0
+  附件2: (141, 46), NaN残留: 0
+  已删除日期衍生列: exam_year
+  已删除日期衍生列: exam_month
+
+预处理完成: (5905, 45), NaN残留: 0
+血糖均值=5.6346, 糖尿病风险=580/5905 (9.82%)
+
+============================================================
+Step 1: 单因素统计筛选（PDF Step 2）
+筛选标准：Pearson/Spearman相关性，p < 0.05
+============================================================
+
+全部特征: 44 个
+通过单因素筛选(p<0.05): 32 个
+
+相关性前15:
+        中文名 类型  Pearson_r    Pearson_p
+         年龄 连续   0.250765 0.000000e+00
+       甘油三酯 连续   0.240991 0.000000e+00
+         尿素 连续   0.161142 1.207393e-35
+  低密度脂蛋白胆固醇 连续   0.154694 5.980156e-33
+       血红蛋白 连续   0.149512 7.241293e-31
+     *碱性磷酸酶 连续   0.148133 2.521932e-30
+       总胆固醇 连续   0.147935 3.015988e-30
+红细胞平均血红蛋白浓度 连续   0.143389 1.686834e-28
+gender_male 连续   0.142224 4.631256e-28
+         肌酐 连续   0.128620 3.311315e-23
+      红细胞压积 连续   0.122927 2.538103e-21
+      红细胞计数 连续   0.122351 3.895603e-21
+  *丙氨酸氨基转换酶 连续   0.121467 7.479928e-21
+ *r-谷氨酰基转换酶 连续   0.120251 1.822067e-20
+  高密度脂蛋白胆固醇 连续  -0.093975 4.624316e-13
+
+  未通过的特征: ['血小板平均体积', '嗜碱细胞%', '乙肝表面抗原', '白球比例', '乙肝e抗体', '乙肝表面抗体', '乙肝核心抗体', '白蛋白', '红细胞平均体积', '乙肝e抗原', '单核细胞%', '嗜酸细胞%']
+Traceback (most recent call last):
+  File "\\HwFs\HMOS_共享文件夹\Project\t1.py", line 407, in <module>
+    main()
+  File "\\HwFs\HMOS_共享文件夹\Project\t1.py", line 382, in main
+    candidates = step1_univariate_screening(df)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "\\HwFs\HMOS_共享文件夹\Project\t1.py", line 159, in step1_univariate_screening
+    bars = ax.barh(range(len(plot_df)), plot_df['Pearson_r'],
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\axes\_axes.py", line 2794, in barh
+    patches = self.bar(x=left, height=height, width=width, bottom=y,
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\__init__.py", line 1528, in inner
+    return func(
+           ^^^^^
+  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\axes\_axes.py", line 2611, in bar
+    r._internal_update(kwargs)
+  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\artist.py", line 1313, in _internal_update
+    return self._update_props(
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\artist.py", line 1274, in _update_props
+    ret.append(func(v))
+               ^^^^^^^
+  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\patches.py", line 487, in set_alpha
+    super().set_alpha(alpha)
+  File "C:\Users\OseasyVM\AppData\Local\Programs\Python\Python312\Lib\site-packages\matplotlib\artist.py", line 1073, in set_alpha
+    raise TypeError(
+TypeError: alpha must be numeric or None, not <class 'list'>
+PS Microsoft.PowerShell.Core\FileSystem::\\HwFs\HMOS_共享文件夹\Project> 
