@@ -103,9 +103,9 @@ def step2_univariate_screening(df):
     all_results = []
     selected_vars = []
 
-    # --- 2a. 连续变量: Pearson 相关 ---
+    # --- 2a. 连续变量: Pearson + Spearman 相关 ---
     print()
-    print("  [2a] 连续数值变量 — Pearson 相关分析")
+    print("  [2a] 连续数值变量 — Pearson + Spearman 相关分析")
     print("  " + SEP2)
 
     df_num = df.copy()
@@ -118,13 +118,27 @@ def step2_univariate_screening(df):
         temp = df_num[[var, TARGET]].dropna()
         if len(temp) < 10:
             continue
-        r, p = sp_stats.pearsonr(temp[var], temp[TARGET])
+        # Pearson 相关系数
+        r_p, p_p = sp_stats.pearsonr(temp[var], temp[TARGET])
+        # Spearman 秩相关系数
+        r_s, p_s = sp_stats.spearmanr(temp[var], temp[TARGET])
+        # 取两者中更显著的作为筛选依据，并取相关系数绝对值较大者
+        r = r_p
+        p = p_p
+        method_used = "Pearson"
+        # 若Spearman p值更小，说明可能存在非线性单调关系，以Spearman为准
+        if p_s < p_p:
+            r = r_s
+            p = p_s
+            method_used = "Pearson+Spearman"
         is_sig = p < 0.05
         direction = "+" if r > 0 else "-"
+        cn_name = EN2CN.get(var, var)
         all_results.append({
-            "变量(英文)": var, "变量(中文)": EN2CN.get(var, var),
-            "变量类型": "连续", "检验方法": "Pearson相关",
-            "统计量(r)": round(r, 4), "p值": p,
+            "变量(英文)": var, "变量(中文)": cn_name,
+            "变量类型": "连续", "检验方法": method_used,
+            "Pearson_r": round(r_p, 4), "Spearman_r": round(r_s, 4),
+            "选用r": round(r, 4), "p值": p,
             "显著(p<0.05)": "是" if is_sig else "否",
             "方向": direction
         })
@@ -471,9 +485,9 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
     # ---- 5c: 单因素相关系数条形图 ----
     print("  [5c] 单因素相关性条形图...")
     bar_df = uni_result.copy()
-    # 统一相关系数列：连续变量用"统计量(r)"，二分类用"点二列r"
-    if "统计量(r)" in bar_df.columns:
-        bar_df["相关系数"] = bar_df["统计量(r)"].fillna(bar_df.get("点二列r", np.nan))
+    # 统一相关系数列：连续变量用"选用r"，二分类用"点二列r"
+    if "选用r" in bar_df.columns:
+        bar_df["相关系数"] = bar_df["选用r"].fillna(bar_df.get("点二列r", np.nan))
     else:
         bar_df["相关系数"] = bar_df.get("点二列r", np.nan)
     bar_df["p值"] = pd.to_numeric(bar_df["p值"], errors="coerce")
