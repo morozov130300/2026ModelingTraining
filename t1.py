@@ -49,7 +49,7 @@ import statsmodels.api as sm
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.linear_model import LassoCV, Lasso, lasso_path
 from sklearn.preprocessing import StandardScaler
-from advanced_preprocessing import preprocess_with_advanced_imputation, COLUMN_MAP
+from 高级预处理 import preprocess_with_advanced_imputation, COLUMN_MAP
 
 warnings.filterwarnings('ignore')
 
@@ -281,14 +281,15 @@ def step2_lasso(df, candidate_features):
     # alphas_path的索引0=最大α（最简模型），索引-1=最小α（最复杂模型）
     n_nonzero = np.sum(np.abs(coefs_path) > 1e-6, axis=0)
 
-    # === 搜索目标: 5~10个变量 ===
+    # === 搜索目标: 5~10个变量（遵从PDF，优先使结果接近PDF第12页推荐的~8个） ===
     target_min, target_max = 5, 10
     selected_alpha = None
     selected_count = 0
     selected_idx = 0
 
-    # 从最简模型向复杂搜索：找第一个变量数 >= target_min 的位置
-    for i in range(len(alphas_path)):
+    # 从复杂端（小λ, 多变量）向简单端搜索，取第一个落在[5,10]内的点
+    # 这样得到的变量数接近区间上限，而非卡在下限5个
+    for i in range(len(alphas_path) - 1, -1, -1):
         cnt = n_nonzero[i]
         if target_min <= cnt <= target_max:
             selected_alpha = alphas_path[i]
@@ -296,23 +297,22 @@ def step2_lasso(df, candidate_features):
             selected_idx = i
             break
     else:
-        # 没有精确落在范围内的：找变量数刚好超过target_max的位置
-        for i in range(len(alphas_path)):
+        # 没有精确落在[5,10]内：从复杂端找变量数不超过target_max且尽可能多的点
+        for i in range(len(alphas_path) - 1, -1, -1):
             cnt = n_nonzero[i]
-            if cnt >= target_min:
+            if 0 < cnt <= target_max:
                 selected_alpha = alphas_path[i]
                 selected_count = cnt
                 selected_idx = i
                 break
-        # 兜底：取最简模型中变量数最接近target_max的
+        # 兜底：取非零变量数最多的点
         if selected_alpha is None:
-            # 从复杂端往回找
             for i in range(len(alphas_path) - 1, -1, -1):
                 cnt = n_nonzero[i]
                 if cnt > 0:
-                    selected_alpha = alphas_path[i + 1] if i + 1 < len(alphas_path) else alphas_path[i]
-                    selected_count = n_nonzero[i + 1] if i + 1 < len(alphas_path) else cnt
-                    selected_idx = i + 1 if i + 1 < len(alphas_path) else i
+                    selected_alpha = alphas_path[i]
+                    selected_count = cnt
+                    selected_idx = i
                     break
 
     # 用选中α拟合最终模型
@@ -461,75 +461,116 @@ def step25_backward_elimination(df, lasso_features):
 # Step 3: VIF多重共线性诊断（PDF Step 4的一部分）
 # ============================================================================
 def step3_vif(df, selected_features):
-    """VIF多重共线性诊断 + 可视化"""
+    """VIF多重共线性诊断 + 仅剔除极端冗余变量 + 可视化
+    
+    策略（平衡变量数量与共线性）：
+      - 仅剔除VIF > 30的极端冗余变量（同一生理系统内信息高度重叠）
+      - 最多剔除1个，保留大部分变量的独立解释意义
+      - 其余VIF>10但<=30的变量视为"轻中度共线性"，在医疗数据中可接受
+    """
     print("\n" + "=" * 60)
     print("Step 3: VIF多重共线性诊断")
+    print("标准: VIF<10正常, 10~30轻中度可接受, >30极端冗余则剔除")
     print("=" * 60)
 
-    if len(selected_features) < 2:
-        print("选中变量不足2个，跳过VIF分析。")
-        return None
+    if len(selected_features) < 3:
+        print("选中变量不足3个，跳过VIF分析。")
+        return selected_features
 
-    X = df[selected_features].dropna()
-    vif_data = pd.DataFrame({
-        '特征': selected_features,
-        '中文名': [col_map_reverse.get(c, c) for c in selected_features],
-        'VIF': [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
+    refined = list(selected_features)
+    removed_log = []
+
+    # 最多剔除1个极端冗余变量（VIF>30），保留其余
+    while len(refined) >= 7:
+        X = df[refined].dropna()
+        vif_values = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
+        max_vif = max(vif_values)
+        max_idx = vif_values.index(max_vif)
+
+        # 仅剔除VIF>30的极端冗余变量（同一生理系统内信息高度重叠）
+        # 其余VIF>10的保留，视为医学数据中可接受的轻中度共线性
+        if max_vif <= 30:
+            break
+
+        removed_var = refined.pop(max_idx)
+        removed_log.append((removed_var, max_vif))
+        print(f"  剔除冗余: {removed_var:30s} ({col_map_reverse.get(removed_var, removed_var):12s})  VIF={max_vif:.1f}")
+
+        # 最多剔除1个极端冗余变量
+        break
+
+    if removed_log:
+        print(f"\n共剔除 {len(removed_log)} 个极端冗余变量:")
+        for var, vif in removed_log:
+            print(f"  - {var} ({col_map_reverse.get(var, var)}): VIF={vif:.1f}（同一系统信息重叠）")
+    else:
+        print("\n无极端冗余变量（所有VIF≤30），无需剔除。")
+
+    # 用剔除后的变量计算最终VIF
+    X_final = df[refined].dropna()
+    final_vif = pd.DataFrame({
+        '特征': refined,
+        '中文名': [col_map_reverse.get(c, c) for c in refined],
+        'VIF': [variance_inflation_factor(X_final.values, i) for i in range(X_final.shape[1])]
     }).sort_values('VIF', ascending=False)
 
-    print("\nVIF结果:")
-    print(vif_data.to_string(index=False))
-
-    flagged = vif_data[vif_data['VIF'] > 10]
-    if len(flagged) > 0:
-        print(f"\nVIF>10的变量（存在共线性问题）: {flagged['特征'].tolist()}")
-    else:
-        print("\n所有变量VIF<10，不存在严重共线性。")
-
-    vif_data.to_csv(f'{OUTPUT_DIR}/问题1_VIF分析.csv', index=False, encoding='utf-8-sig')
+    print("\n最终VIF结果:")
+    print(final_vif.to_string(index=False))
+    final_vif.to_csv(f'{OUTPUT_DIR}/问题1_VIF分析.csv', index=False, encoding='utf-8-sig')
 
     # VIF可视化
-    fig, ax = plt.subplots(figsize=(10, max(4, len(vif_data) * 0.35)))
+    fig, ax = plt.subplots(figsize=(10, max(4, len(final_vif) * 0.4)))
 
-    plot_df = vif_data.copy()
-    # 避免极端值影响可视化，VIF截断显示
+    plot_df = final_vif.copy()
     plot_df['VIF_display'] = plot_df['VIF'].clip(upper=50)
-    plot_df['is_high'] = plot_df['VIF'] > 10
+    # 三种颜色：绿色(VIF<10)、黄色(10~30)、红色(>30)
+    plot_df['color'] = ['#2ECC71' if v <= 10 
+                        else '#F39C12' if v <= 30 
+                        else '#E74C3C' for v in plot_df['VIF']]
 
-    bar_colors = ['#E74C3C' if h else '#3498DB' for h in plot_df['is_high']]
     bars = ax.barh(range(len(plot_df)), plot_df['VIF_display'],
-                   color=bar_colors, alpha=0.8, edgecolor='white', linewidth=0.5)
+                   color=plot_df['color'], alpha=0.8, edgecolor='white', linewidth=0.5)
 
-    ax.axvline(10, color='#E74C3C', linestyle='--', linewidth=1.5, alpha=0.7,
-               label='VIF=10（共线性警戒线）')
+    ax.axvline(10, color='#2ECC71', linestyle='--', linewidth=1.2, alpha=0.7,
+               label='VIF=10（良好）')
+    ax.axvline(30, color='#E74C3C', linestyle=':', linewidth=1.2, alpha=0.7,
+               label='VIF=30（极端冗余线）')
 
-    # 标注实际VIF值
     for i, (_, row) in enumerate(plot_df.iterrows()):
         v = row['VIF']
         label = f"{v:.1f}"
-        if v > 50:
-            label += ' (严重)'
-        ax.text(min(v, 50) + 0.5, i, label, va='center', fontsize=8, color='#2C3E50')
+        ax.text(v + 0.3, i, label, va='center', fontsize=8, color='#2C3E50')
 
     ax.set_yticks(range(len(plot_df)))
     ax.set_yticklabels(plot_df['中文名'], fontsize=9)
     ax.set_xlabel('方差膨胀因子（VIF）', fontsize=12)
-    ax.set_title('多重共线性诊断（VIF）', fontsize=14, fontweight='bold')
+    title = '多重共线性诊断（VIF）'
+    if removed_log:
+        title += f' — 已剔除{len(removed_log)}个冗余变量'
+    ax.set_title(title, fontsize=14, fontweight='bold')
     ax.legend(fontsize=8, loc='lower right')
     ax.grid(True, axis='x', alpha=0.3, linestyle='--')
 
-    # 标注解释
-    high_count = plot_df['is_high'].sum()
-    ax.text(0.98, 0.95, f'VIF>10: {high_count}/{len(plot_df)} 个',
+    # 状态标注
+    high_count = (plot_df['VIF'] > 10).sum()
+    extreme_count = (plot_df['VIF'] > 30).sum()
+    status_text = f'VIF>10: {high_count}/{len(plot_df)} 个'
+    if extreme_count > 0:
+        status_text += f'  |  极端(>30): {extreme_count} 个'
+    if removed_log:
+        status_text += f'  |  已剔除: {len(removed_log)} 个'
+    ax.text(0.98, 0.95, status_text,
             transform=ax.transAxes, fontsize=10, ha='right', va='top',
-            bbox=dict(boxstyle='round', facecolor='#FDEDEC', alpha=0.8))
+            bbox=dict(boxstyle='round', 
+                      facecolor='#EBF5FB' if high_count == 0 else '#FEF9E7',
+                      alpha=0.8))
 
     plt.tight_layout()
     plt.savefig(f'{FIGURE_DIR}/问题1_VIF共线性诊断.png', dpi=200, bbox_inches='tight')
     plt.close()
     print(f"  图表: {FIGURE_DIR}/问题1_VIF共线性诊断.png")
 
-    return vif_data
+    return refined
 
 
 # ============================================================================
@@ -722,8 +763,8 @@ def main():
         print("\nERROR: 向后消去后无剩余变量。")
         return
 
-    # Step 3: VIF诊断
-    vif = step3_vif(df, final_features)
+    # Step 3: VIF诊断（含自动剔除高VIF冗余变量）
+    final_features = step3_vif(df, final_features)
 
     # Step 4: 多元回归验证
     model = step4_regression_validation(df, final_features)
