@@ -557,7 +557,7 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
     ax.axhline(y=0, color="gray", linestyle=":", linewidth=0.5)
     plt.tight_layout()
     _apply_font_figure(fig)
-    fig.savefig(os.path.join(OUTPUT_DIR, "LASSO系数路径图.png"), dpi=300)
+    fig.savefig(os.path.join(OUTPUT_DIR, "问题1_LASSO系数路径图.png"), dpi=300)
     plt.close(fig)
     print("    -> LASSO系数路径图.png")
 
@@ -584,7 +584,7 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
     ax.legend(fontsize=10)
     plt.tight_layout()
     _apply_font_figure(fig)
-    fig.savefig(os.path.join(OUTPUT_DIR, "LASSO交叉验证曲线.png"), dpi=300)
+    fig.savefig(os.path.join(OUTPUT_DIR, "问题1_LASSO交叉验证曲线.png"), dpi=300)
     plt.close(fig)
     print("    -> LASSO交叉验证曲线.png")
 
@@ -621,7 +621,7 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
     cbar.set_label("相关系数值", fontsize=10)
     plt.tight_layout()
     _apply_font_figure(fig)
-    fig.savefig(os.path.join(OUTPUT_DIR, "单因素相关性条形图.png"), dpi=300)
+    fig.savefig(os.path.join(OUTPUT_DIR, "问题1_单因素相关性条形图.png"), dpi=300)
     plt.close(fig)
     print("    -> 单因素相关性条形图.png")
 
@@ -648,7 +648,7 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
         ax.set_title("入选变量相关系数矩阵热力图", fontsize=15, fontweight="bold")
         plt.tight_layout()
         _apply_font_figure(fig)
-        fig.savefig(os.path.join(OUTPUT_DIR, "入选变量相关系数热力图.png"), dpi=300)
+        fig.savefig(os.path.join(OUTPUT_DIR, "问题1_入选变量相关系数热力图.png"), dpi=300)
         plt.close(fig)
         print("    -> 入选变量相关系数热力图.png")
     else:
@@ -666,7 +666,7 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
         g.fig.suptitle("入选变量与血糖的散点图矩阵", fontsize=15, fontweight="bold", y=1.02)
         plt.tight_layout()
         _apply_font_figure(g.fig, tick_size=7)
-        g.savefig(os.path.join(OUTPUT_DIR, "入选变量散点图矩阵.png"), dpi=300)
+        g.savefig(os.path.join(OUTPUT_DIR, "问题1_入选变量散点图矩阵.png"), dpi=300)
         plt.close(g.fig)
         print("    -> 入选变量散点图矩阵.png")
     else:
