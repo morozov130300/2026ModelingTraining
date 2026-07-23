@@ -235,7 +235,17 @@ def step2_lasso(df, candidate_features):
 
     print(f"\n最小MSE对应λ: {lasso.alpha_:.6f} (非零系数: {np.sum(np.abs(lasso.coef_) > 1e-6)})")
     print(f"1se准则对应λ:  {alpha_1se:.6f}")
-    print(f"非零系数个数: {sum(coef_mask)} / {len(candidate_features)}")
+    print(f"1se规则非零系数个数: {sum(coef_mask)} / {len(candidate_features)}")
+
+    # === 若1se选出0个变量，回退到最小MSE对应的λ ===
+    if len(selected_features) == 0:
+        print("\n  1se准则未选中任何变量，回退到最小MSE对应λ")
+        alpha_1se = lasso.alpha_
+        lasso_final = Lasso(alpha=alpha_1se, max_iter=10000, random_state=RANDOM_SEED)
+        lasso_final.fit(X_scaled, y)
+        coef_mask = np.abs(lasso_final.coef_) > 1e-6
+        selected_features = [candidate_features[i] for i, keep in enumerate(coef_mask) if keep]
+        print(f"  回退后非零系数个数: {sum(coef_mask)} / {len(candidate_features)}")
 
     if selected_features:
         print(f"\nLASSO选中的变量 ({len(selected_features)} 个):")
