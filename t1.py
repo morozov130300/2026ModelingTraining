@@ -34,21 +34,55 @@ from 数据预处理 import (
 SEP = "=" * 72
 SEP2 = "-" * 60
 
-# 可视化设置 — 自动检测中文字体
+# 可视化设置 — 中文字体检测与配置
 import matplotlib.font_manager as fm
+
+# 方法1：扫描已注册字体名
 _chinese_fonts = [f.name for f in fm.fontManager.ttflist
                   if any(k in f.name for k in ["SimHei", "YaHei", "Hei", "WenQuanYi",
                                                 "Noto Sans CJK", "Source Han",
-                                                "Microsoft YaHei", "Microsoft JhengHei",
                                                 "FangSong", "KaiTi", "NSimSun",
                                                 "DengXian", "STSong", "STHeiti",
                                                 "STKaiti"])]
+
+# 方法2：直接扫描Windows字体目录下的字体文件
+import glob as _glob
+_font_dirs = [
+    os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"),
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    os.path.expanduser("~/.fonts"),
+    os.path.expanduser("~/Library/Fonts"),
+]
+_chinese_fnames = ["msyh.ttf", "msyh.ttc", "msyhbd.ttf", "simhei.ttf",
+                   "simsun.ttc", "simsun.ttf", "Deng.ttf", "Dengb.ttf",
+                   "NotoSansCJKsc-Regular.otf", "NotoSansSC-Regular.otf",
+                   "wqy-microhei.ttc", "wqy-zenhei.ttc"]
+for _d in _font_dirs:
+    if os.path.isdir(_d):
+        for _fn in _chinese_fnames:
+            _fp = os.path.join(_d, _fn)
+            if os.path.exists(_fp):
+                try:
+                    fm.fontManager.addfont(_fp)
+                    _chinese_fonts.append(fm.FontProperties(fname=_fp).get_name())
+                except Exception:
+                    pass
+
+# 去重并设置
 if _chinese_fonts:
-    plt.rcParams["font.sans-serif"] = _chinese_fonts[:1] + plt.rcParams.get("font.sans-serif", [])
+    _chinese_fonts = list(dict.fromkeys(_chinese_fonts))  # 去重保序
+    plt.rcParams["font.sans-serif"] = _chinese_fonts[:1]
+    # 验证字体是否可用
+    try:
+        _fp = fm.FontProperties(family=_chinese_fonts[0])
+        plt.rcParams["font.family"] = _chinese_fonts[0]
+    except Exception:
+        plt.rcParams["font.family"] = "sans-serif"
 else:
-    # 兜底：常见中文字体名
-    plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "WenQuanYi Micro Hei",
-                                        "Noto Sans CJK SC", "DejaVu Sans"]
+    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei",
+                                        "WenQuanYi Micro Hei", "DejaVu Sans"]
+    plt.rcParams["font.family"] = "sans-serif"
 plt.rcParams["axes.unicode_minus"] = False
 plt.rcParams["figure.dpi"] = 150
 plt.rcParams["savefig.dpi"] = 300
@@ -506,20 +540,26 @@ def step5_visualization(df, uni_result, lasso_selected, candidate_vars, best_alp
     bar_df["p值"] = pd.to_numeric(bar_df["p值"], errors="coerce")
     bar_df = bar_df.dropna(subset=["p值", "相关系数"])
     bar_df = bar_df.sort_values("相关系数", ascending=True)
-    bar_df["颜色"] = bar_df["显著(p<0.05)"].map({"是": "#E74C3C", "否": "#95A5A6"})
+
+    # 渐变色：根据相关系数绝对值从蓝色渐变到红色
+    import matplotlib.colors as mcolors
+    norm = mcolors.TwoSlopeNorm(vmin=-0.05, vcenter=0, vmax=bar_df["相关系数"].abs().max() * 1.2)
+    cmap = plt.cm.RdBu_r
+    bar_colors = [cmap(norm(v)) for v in bar_df["相关系数"].values]
 
     fig, ax = plt.subplots(figsize=(12, 10))
     bars = ax.barh(range(len(bar_df)), bar_df["相关系数"].values,
-                   color=bar_df["颜色"].values, alpha=0.8, edgecolor="white")
+                   color=bar_colors, alpha=0.85, edgecolor="white", linewidth=0.5)
     ax.set_yticks(range(len(bar_df)))
     ax.set_yticklabels(bar_df["变量(中文)"].values, fontsize=9)
     ax.axvline(0, color="black", linewidth=0.8)
-    ax.set_xlabel("Pearson相关系数 r", fontsize=13)
-    ax.set_title("各检测指标与血糖的 Pearson 相关性", fontsize=15, fontweight="bold")
-    from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor="#E74C3C", label="显著 (p<0.05)"),
-                       Patch(facecolor="#95A5A6", label="不显著 (p>=0.05)")]
-    ax.legend(handles=legend_elements, fontsize=10, loc="lower right")
+    ax.set_xlabel("相关系数 r", fontsize=13)
+    ax.set_title("各检测指标与血糖的相关性（红色=正相关, 蓝色=负相关）", fontsize=15, fontweight="bold")
+    # 颜色条
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax, orientation="vertical", pad=0.02, shrink=0.6)
+    cbar.set_label("相关系数值", fontsize=10)
     plt.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, "单因素相关性条形图.png"), dpi=300)
     plt.close(fig)
