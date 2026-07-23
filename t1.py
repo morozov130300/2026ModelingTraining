@@ -21,6 +21,7 @@ t1.py — 问题1：主要变量筛选（严格按问题1gpt.pdf方案）
 """
 
 import os, sys, warnings, datetime
+warnings.filterwarnings('ignore', message='Font.*glyph')  # 静默字体缺失Unicode减号警告
 import numpy as np
 import pandas as pd
 from scipy import stats
