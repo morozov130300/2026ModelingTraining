@@ -48,6 +48,7 @@ from sklearn.linear_model import LinearRegression, Ridge, RidgeCV
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from sklearn.preprocessing import StandardScaler
+from matplotlib.ticker import FormatStrFormatter, MultipleLocator
 
 from 高级预处理 import preprocess_with_advanced_imputation, COLUMN_MAP
 
@@ -380,8 +381,8 @@ def step4_comparison(ridge_result, rf_result, df):
         ax.set_xlim(lims); ax.set_ylim(lims)
         ax.set_xticks(np.arange(np.floor(lo), np.ceil(hi) + 0.5, 1.0))
         ax.set_yticks(np.arange(np.floor(lo), np.ceil(hi) + 0.5, 1.0))
-        ax.xaxis.set_major_formatter(plt.FormatStrFormatter('%.1f'))
-        ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.1f'))
+        ax.xaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+        ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
         ax.set_xlabel('真实血糖值 (mmol/L)', fontsize=11)
         ax.set_ylabel('预测血糖值 (mmol/L)', fontsize=11)
         ax.set_title(name, fontsize=12, fontweight='bold')
@@ -414,40 +415,59 @@ def step4_comparison(ridge_result, rf_result, df):
     plt.close()
     print(f"  图表: {FIGURE_DIR}/问题2_模型指标对比.png")
 
-    # ====== 可视化3: 残差分析（Ridge + RF） ======
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    models_resid = [
-        ('岭回归 (Ridge)', ridge_result['y_pred'], '#2ECC71'),
-        ('随机森林 (RF)', rf_result['y_pred'], '#E74C3C'),
-    ]
-    for idx, (name, pred, color) in enumerate(models_resid):
-        residuals = y - pred
-        # 残差分布
-        ax = axes[0, idx]
-        ax.hist(residuals, bins=50, color=color, alpha=0.7, edgecolor='white')
-        ax.axvline(0, color='black', linestyle='--', linewidth=1)
-        ax.set_xlabel('残差', fontsize=10); ax.set_ylabel('频数', fontsize=10)
-        ax.set_title(f'{name} 残差分布', fontsize=12, fontweight='bold')
-        ax.text(0.95, 0.95, f'均值={residuals.mean():.4f}\n标准差={residuals.std():.4f}',
-                transform=ax.transAxes, fontsize=9, ha='right', va='top',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        ax.grid(True, alpha=0.2)
-        # 残差vs预测值
-        ax = axes[1, idx]
-        ax.scatter(pred, residuals, alpha=0.35, s=10, c=color, edgecolors='white')
-        ax.axhline(0, color='black', linestyle='--', linewidth=1)
-        # 用百分位数截断离群值，聚焦主要数据区域
-        pred_lo = np.percentile(pred, 0.5)
-        pred_hi = np.percentile(pred, 99.5)
-        res_lo = np.percentile(residuals, 0.5)
-        res_hi = np.percentile(residuals, 99.5)
-        ax.set_xlim(pred_lo - 0.3, pred_hi + 0.3)
-        ax.set_ylim(res_lo - 0.3, res_hi + 0.3)
-        ax.xaxis.set_major_locator(plt.MultipleLocator(1.0))
-        ax.yaxis.set_major_locator(plt.MultipleLocator(1.0))
-        ax.set_xlabel('预测值', fontsize=10); ax.set_ylabel('残差', fontsize=10)
-        ax.set_title(f'{name} 残差vs预测值', fontsize=12, fontweight='bold')
-        ax.grid(True, alpha=0.2)
+    # ====== 可视化3: 残差分析 — 小提琴图+散点图（Ridge + RF 合并） ======
+    fig, ax = plt.subplots(figsize=(12, 7))
+    ridge_residuals = y - ridge_result['y_pred']
+    rf_residuals = y - rf_result['y_pred']
+
+    # 剔除极端离群残差（保留0.5%~99.5%范围），聚焦主要分布
+    all_resid = np.concatenate([ridge_residuals, rf_residuals])
+    lo = np.percentile(all_resid, 0.5)
+    hi = np.percentile(all_resid, 99.5)
+    ridge_clipped = np.clip(ridge_residuals, lo, hi)
+    rf_clipped = np.clip(rf_residuals, lo, hi)
+
+    # 准备数据
+    plot_data = []
+    for val, label in zip(ridge_clipped, ['岭回归 (Ridge)'] * len(ridge_clipped)):
+        plot_data.append({'模型': label, '残差': val})
+    for val, label in zip(rf_clipped, ['随机森林 (RF)'] * len(rf_clipped)):
+        plot_data.append({'模型': label, '残差': val})
+    plot_df = pd.DataFrame(plot_data)
+
+    # 小提琴图
+    sns.violinplot(x='模型', y='残差', data=plot_df, ax=ax,
+                   palette=['#2ECC71', '#E74C3C'], alpha=0.4,
+                   inner=None, linewidth=1.5, width=0.6)
+    # 添加散点（抖动）
+    for idx, (name, resid, color) in enumerate([
+        ('岭回归 (Ridge)', ridge_clipped, '#2ECC71'),
+        ('随机森林 (RF)', rf_clipped, '#E74C3C'),
+    ]):
+        jitter = np.random.normal(0, 0.06, size=len(resid))
+        ax.scatter(np.full_like(resid, idx) + jitter, resid,
+                   alpha=0.25, s=5, c=color, edgecolors='none', zorder=3)
+
+    # 零线
+    ax.axhline(0, color='black', linestyle='-', linewidth=1.5, alpha=0.6)
+    # y轴范围
+    ax.set_ylim(lo - 0.3, hi + 0.3)
+    ax.set_ylabel('残差 (mmol/L)', fontsize=12)
+    ax.set_title('残差分布对比：岭回归 vs 随机森林', fontsize=14, fontweight='bold')
+    ax.grid(True, axis='y', alpha=0.2)
+
+    # 标注均值和标准差
+    for idx, (name, resid, color) in enumerate([
+        ('岭回归 (Ridge)', ridge_residuals, '#2ECC71'),
+        ('随机森林 (RF)', rf_residuals, '#E74C3C'),
+    ]):
+        mean_r = resid.mean()
+        std_r = resid.std()
+        ax.text(idx, ax.get_ylim()[1] * 0.92,
+                f'均值={mean_r:.4f}\n标准差={std_r:.4f}',
+                ha='center', va='top', fontsize=10, color=color,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+
     plt.tight_layout()
     plt.savefig(f'{FIGURE_DIR}/问题2_残差分析图.png', dpi=200, bbox_inches='tight')
     plt.close()
