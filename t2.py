@@ -123,17 +123,16 @@ def compare(g1, X, y, preds):
     y1 = g1.predict(X)
     bins = [0,5.6,6.1,7.0,20]; lbl = ["<5.6正常","5.6-6.1临界","6.1-7.0偏高",">7.0高值"]
     yb = pd.cut(y, bins=bins, labels=lbl)
-    print("\n  %-18s %10s %10s"%("血糖区间","高斯RMSE","GammaRMSE")); print("  "+"-"*42)
+    print("\n  %-18s %10s"%("血糖区间","RMSE")); print("  "+"-"*30)
     for l in lbl:
         m = yb==l
         if m.sum()<3: continue
-        print("  %-18s %10.4f %10.4f"%(l,np.sqrt(mean_squared_error(y[m],y1[m])),
-                                       np.sqrt(mean_squared_error(y[m],y2[m]))))
-    print("  "+"="*30); print("  %-18s %10s %10s"%("指标","高斯GAM","Gamma GAM")); print("  "+"-"*42)
+        print("  %-18s %10.4f"%(l,np.sqrt(mean_squared_error(y[m],y1[m]))))
+    print("  "+"="*30)
     def m(y,yp): r=np.sqrt(mean_squared_error(y,yp)); r2=r2_score(y,yp); return r,r2,1-(1-r2)*(len(y)-1)/(len(y)-X.shape[1]-1)
-    print("  %-18s %10.4f %10.4f"%("RMSE",m(y,y1)[0],m(y,y2)[0]))
-    print("  %-18s %10.6f %10.6f"%("R²",m(y,y1)[1],m(y,y2)[1]))
-    print("  %-18s %10.6f %10.6f"%("调整R²",m(y,y1)[2],m(y,y2)[2]))
+    print("  %-18s %10.4f"%("RMSE",m(y,y1)[0]))
+    print("  %-18s %10.6f"%("R²",m(y,y1)[1]))
+    print("  %-18s %10.6f"%("调整R²",m(y,y1)[2]))
     print("  %-18s %10.2f"%("AIC",g1.statistics_.get("AIC",0)))
     print("  "+"="*30)
 
@@ -182,7 +181,8 @@ def main():
         zg = gam_b.predict(Xg).reshape(50,50)
         fig, ax = plt.subplots(figsize=(8,6))
         ct = ax.contourf(xx1, xx2, zg, levels=20, cmap="RdYlBu_r")
-        plt.colorbar(ct, ax=ax, label="预测血糖")
+        cbar = plt.colorbar(ct, ax=ax)
+        cbar.set_label("预测血糖", fontproperties=_CN_FP)
         ax.scatter(X[:,0], X[:,1], c=y, cmap="RdYlBu_r", edgecolors="gray", s=8, alpha=0.3)
         ax.set_xlabel(VARN.get("年龄"), fontproperties=_CN_FP)
         ax.set_ylabel(VARN.get("TG"), fontproperties=_CN_FP)
