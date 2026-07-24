@@ -54,7 +54,9 @@ def fit_gam(df, preds, k=10, interaction=False):
 def diagnostics(gam, X, y, preds, name="GAM"):
     yp = gam.predict(X); res = y - yp
     fig, axs = plt.subplots(2,2,figsize=(12,10))
-    stats.probplot(res, dist="norm", plot=axs[0,0])
+    (osm, osr), (slope, intercept, r) = stats.probplot(res, dist="norm")
+    axs[0,0].scatter(osm, osr, s=4, c="#3498DB", alpha=0.5, edgecolors="none")
+    axs[0,0].plot(osm, slope * osm + intercept, color="#E74C3C", linewidth=1.5)
     axs[0,0].set_title("Q-Q图", fontproperties=_CN_FP)
     axs[0,1].scatter(yp, res, alpha=0.3, s=8); axs[0,1].axhline(0,c="r",ls="--")
     # x轴范围限定在1%~99%分位数，剔除极端离群值，聚焦主要数据
