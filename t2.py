@@ -118,20 +118,9 @@ def plot_partial(gam, X, y, preds, name="GAM"):
     fig.savefig(os.path.join(OUTPUT_DIR,"问题2_偏效应图_"+name.replace(" ","_")+".png"), dpi=300); plt.close()
     print("  -> 偏效应图已保存")
 
-def fit_gamma(df, preds, k=10):
-    from pygam import GammaGAM, s
-    X, y = df[preds].values, df[TARGET].values
-    if (y<=0).any(): y += 0.001
-    gam = GammaGAM(_ts([s(i,n_splines=k) for i in range(len(preds))]), fit_intercept=True)
-    gam.fit(X, y)
-    yp = gam.predict(X); rmse = np.sqrt(mean_squared_error(y, yp))
-    r2 = r2_score(y, yp); n,p = len(y), X.shape[1]; ar2 = 1-(1-r2)*(n-1)/(n-p-1)
-    print("  Gamma GAM: EDF=%.2f AIC=%.2f RMSE=%.4f R²=%.6f adjR²=%.6f" %
-          (gam.statistics_.get("edof",0), gam.statistics_.get("AIC",0), rmse, r2, ar2))
-    return gam
 
-def compare(g1, g2, X, y, preds):
-    y1 = g1.predict(X); y2 = g2.predict(X) if g2 else y1
+def compare(g1, X, y, preds):
+    y1 = g1.predict(X)
     bins = [0,5.6,6.1,7.0,20]; lbl = ["<5.6正常","5.6-6.1临界","6.1-7.0偏高",">7.0高值"]
     yb = pd.cut(y, bins=bins, labels=lbl)
     print("\n  %-18s %10s %10s"%("血糖区间","高斯RMSE","GammaRMSE")); print("  "+"-"*42)
@@ -140,13 +129,13 @@ def compare(g1, g2, X, y, preds):
         if m.sum()<3: continue
         print("  %-18s %10.4f %10.4f"%(l,np.sqrt(mean_squared_error(y[m],y1[m])),
                                        np.sqrt(mean_squared_error(y[m],y2[m]))))
-    print("  "+"="*42); print("  %-18s %10s %10s"%("指标","高斯GAM","Gamma GAM")); print("  "+"-"*42)
+    print("  "+"="*30); print("  %-18s %10s %10s"%("指标","高斯GAM","Gamma GAM")); print("  "+"-"*42)
     def m(y,yp): r=np.sqrt(mean_squared_error(y,yp)); r2=r2_score(y,yp); return r,r2,1-(1-r2)*(len(y)-1)/(len(y)-X.shape[1]-1)
     print("  %-18s %10.4f %10.4f"%("RMSE",m(y,y1)[0],m(y,y2)[0]))
     print("  %-18s %10.6f %10.6f"%("R²",m(y,y1)[1],m(y,y2)[1]))
     print("  %-18s %10.6f %10.6f"%("调整R²",m(y,y1)[2],m(y,y2)[2]))
-    print("  %-18s %10.2f %10.2f"%("AIC",g1.statistics_.get("AIC",0),g2.statistics_.get("AIC",0) if g2 else 0))
-    print("  "+"="*42)
+    print("  %-18s %10.2f"%("AIC",g1.statistics_.get("AIC",0)))
+    print("  "+"="*30)
 
 def main():
     print("="*72+"\n  问题2: GAM血糖预测模型（自动比较交互项）\n"+"="*72)
@@ -179,7 +168,7 @@ def main():
 
     print("\n"+"="*60+"\n  最终模型输出\n"+"="*60)
     print("  最终选择: %s" % final_name)
-    _, _, het, _ = diagnostics(final_model, X, y, FINAL_VARS, final_name)
+    diagnostics(final_model, X, y, FINAL_VARS, final_name)
     plot_partial(final_model, X, y, FINAL_VARS, final_name)
 
     if plot_interaction:
@@ -204,13 +193,9 @@ def main():
     else:
         print("  交互项未入选，跳过等高线图")
 
-    g2 = None
-    if het:
-        print("\n  异方差显著 → 升级Gamma GAM")
-        g2 = fit_gamma(df, FINAL_VARS)
-        diagnostics(g2, X, y, FINAL_VARS, "Gamma模型")
+    
 
-    compare(final_model, g2, X, y, FINAL_VARS)
+    compare(final_model, X, y, FINAL_VARS)
 
     print("\n"+"="*72+"\n  完成!\n"+"="*72)
     for f in sorted(os.listdir(OUTPUT_DIR)):

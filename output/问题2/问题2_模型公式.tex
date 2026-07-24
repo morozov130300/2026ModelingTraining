@@ -93,16 +93,3 @@ R^2 &= 0.1618 \\
 \end{aligned}
 \]
 
-## 九、Gamma GAM升级方案（当异方差显著时）
-
-\[
-Y_i \mid \boldsymbol{X}_i \sim \text{Gamma}(\mu_i, \phi)
-\]
-
-\[
-\text{Var}(Y_i \mid \boldsymbol{X}_i) = \phi \cdot \mu_i^2
-\]
-
-\[
-\log(\mu_i) = \beta_0 + \sum_{j=1}^{7} f_j(X_{ji}) + f_{12}(\text{Age}_i, \text{TG}_i)
-\]
