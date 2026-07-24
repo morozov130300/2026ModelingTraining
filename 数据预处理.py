@@ -1,23 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-数据预处理模块
-==============
-为2026年武汉理工大学数学建模训练第3题（糖尿病风险预测）提供数据预处理。
-直接运行即可输出所有分析结果（缺失值统计、描述性统计、单因素相关、LASSO、VIF、多元回归）。
-
-供其他解题文件调用：
-    from 数据预处理 import load_and_rename, impute_median
-    df1 = load_and_rename("附件1：有血糖值的检测数据.csv")
-    df1_clean = impute_median(df1)
-"""
-
 import warnings
 warnings.filterwarnings("ignore")
-
 import numpy as np
 import pandas as pd
 from scipy import stats
-from sklearn.linear_model import LassoCV, Lasso, Lasso
+from sklearn.linear_model import LassoCV, Lasso
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error
 from statsmodels.stats.outliers_influence import variance_inflation_factor
@@ -28,78 +15,38 @@ import os
 SEP1 = "=" * 70
 SEP2 = "-" * 60
 
-# ============================================================================
-# 1. 路径配置
-# ============================================================================
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_SUBDIR = "2026年武汉理工大学数学建模训练题目1-3"
 CSV1 = os.path.join(CURRENT_DIR, DATA_SUBDIR, "附件1：有血糖值的检测数据.csv")
 CSV2 = os.path.join(CURRENT_DIR, DATA_SUBDIR, "附件2：无血糖值的检测数据.csv")
-
 TARGET = "血糖"
 
-# ============================================================================
-# 2. 列名映射（中文名 → 英文缩写，经正确解码GBK验证）
-# ============================================================================
 CN2EN = {
-    "id": "id",
-    "体检日期": "体检日期",
-    "性别": "性别",
-    "年龄": "年龄",
-    "*r-谷氨酰基转换酶": "GGT",
-    "*丙氨酸氨基转换酶": "ALT",
-    "*天门冬氨酸氨基转换酶": "AST",
-    "*总蛋白": "TP",
-    "*球蛋白": "GLB",
-    "*碱性磷酸酶": "ALP",
-    "尿素": "BUN",
-    "肌酐": "Cr",
-    "尿酸": "UA",
-    "甘油三酯": "TG",
-    "总胆固醇": "TC",
-    "高密度脂蛋白胆固醇": "HDL_C",
-    "低密度脂蛋白胆固醇": "LDL_C",
-    "白蛋白": "ALB",
-    "白球比例": "A_G",
-    "白细胞计数": "WBC",
-    "红细胞计数": "RBC",
-    "血红蛋白": "HGB",
-    "红细胞压积": "HCT",
-    "红细胞平均体积": "MCV",
-    "红细胞平均血红蛋白量": "MCH",
-    "红细胞平均血红蛋白浓度": "MCHC",
-    "红细胞体积分布宽度": "RDW",
-    "血小板计数": "PLT",
-    "血小板平均体积": "MPV",
-    "血小板体积分布宽度": "PDW",
-    "血小板比积": "PCT",
-    "中性粒细胞%": "NEU_pct",
-    "淋巴细胞%": "LYM_pct",
-    "单核细胞%": "MON_pct",
-    "嗜酸细胞%": "EOS_pct",
-    "嗜碱细胞%": "BAS_pct",
-    "乙肝表面抗原": "HBsAg",
-    "乙肝表面抗体": "HBsAb",
-    "乙肝e抗原": "HBeAg",
-    "乙肝e抗体": "HBeAb",
-    "乙肝核心抗体": "HBcAb",
-    "血糖": "血糖",
+    "id": "id", "体检日期": "体检日期", "性别": "性别", "年龄": "年龄",
+    "*r-谷氨酰基转换酶": "GGT", "*丙氨酸氨基转换酶": "ALT",
+    "*天门冬氨酸氨基转换酶": "AST", "*总蛋白": "TP", "*球蛋白": "GLB",
+    "*碱性磷酸酶": "ALP", "尿素": "BUN", "肌酐": "Cr", "尿酸": "UA",
+    "甘油三酯": "TG", "总胆固醇": "TC", "高密度脂蛋白胆固醇": "HDL_C",
+    "低密度脂蛋白胆固醇": "LDL_C", "白蛋白": "ALB", "白球比例": "A_G",
+    "白细胞计数": "WBC", "红细胞计数": "RBC", "血红蛋白": "HGB",
+    "红细胞压积": "HCT", "红细胞平均体积": "MCV", "红细胞平均血红蛋白量": "MCH",
+    "红细胞平均血红蛋白浓度": "MCHC", "红细胞体积分布宽度": "RDW",
+    "血小板计数": "PLT", "血小板平均体积": "MPV", "血小板体积分布宽度": "PDW",
+    "血小板比积": "PCT", "中性粒细胞%": "NEU_pct", "淋巴细胞%": "LYM_pct",
+    "单核细胞%": "MON_pct", "嗜酸细胞%": "EOS_pct", "嗜碱细胞%": "BAS_pct",
+    "乙肝表面抗原": "HBsAg", "乙肝表面抗体": "HBsAb", "乙肝e抗原": "HBeAg",
+    "乙肝e抗体": "HBeAb", "乙肝核心抗体": "HBcAb", "血糖": "血糖",
 }
 EN2CN = {v: k for k, v in CN2EN.items()}
 
-# ============================================================================
-# 3. 六个临床类别（用英文缩写）
-# ============================================================================
 CATEGORIES_EN = {
     "人口学特征": ["性别", "年龄"],
     "糖脂代谢指标": ["TG", "TC", "HDL_C", "LDL_C"],
     "肝功能指标": ["AST", "ALT", "ALP", "GGT", "TP", "ALB", "GLB", "A_G"],
     "肾功能指标": ["BUN", "Cr", "UA"],
-    "血常规指标": [
-        "WBC", "RBC", "HGB", "HCT", "MCV", "MCH", "MCHC", "RDW",
-        "PLT", "MPV", "PDW", "PCT",
-        "NEU_pct", "LYM_pct", "MON_pct", "EOS_pct", "BAS_pct"
-    ],
+    "血常规指标": ["WBC", "RBC", "HGB", "HCT", "MCV", "MCH", "MCHC", "RDW",
+                    "PLT", "MPV", "PDW", "PCT",
+                    "NEU_pct", "LYM_pct", "MON_pct", "EOS_pct", "BAS_pct"],
     "感染免疫指标": ["HBsAg", "HBsAb", "HBeAg", "HBeAb", "HBcAb"],
 }
 
@@ -109,11 +56,7 @@ for v in CATEGORIES_EN.values():
 ALL_PREDICTORS_EN = list(set(ALL_PREDICTORS_EN))
 
 
-# ============================================================================
-# 4. 数据加载
-# ============================================================================
 def load_and_rename(filepath):
-    """读取CSV(gbk编码)，将中文列名重命名为英文缩写。"""
     df = pd.read_csv(filepath, encoding="gbk")
     df.columns = df.columns.str.strip()
     rename_map = {cn: CN2EN[cn] for cn in df.columns if cn in CN2EN}
@@ -122,11 +65,7 @@ def load_and_rename(filepath):
     return df_renamed[keep_cols]
 
 
-# ============================================================================
-# 5. 缺失值分析与填补
-# ============================================================================
 def analyze_missing(df, title="数据"):
-    """打印并返回缺失值统计报告。"""
     miss_count = df.isnull().sum()
     miss_rate = (df.isnull().sum() / len(df) * 100).round(2)
     miss_df = pd.DataFrame({"缺失数": miss_count, "缺失率(%)": miss_rate})
@@ -145,7 +84,6 @@ def analyze_missing(df, title="数据"):
 
 
 def impute_median(df):
-    """填补缺失值：连续变量用中位数，分类变量用众数。"""
     df_out = df.copy()
     for col in df_out.columns:
         if df_out[col].isnull().any():
@@ -158,11 +96,7 @@ def impute_median(df):
     return df_out
 
 
-# ============================================================================
-# 6. 描述性统计（按临床类别）
-# ============================================================================
 def descriptive_stats(df, title="数据"):
-    """按六个临床类别分别输出描述性统计。"""
     print()
     print(SEP1)
     print("  [描述性统计] " + title)
@@ -179,11 +113,7 @@ def descriptive_stats(df, title="数据"):
         print(desc.to_string())
 
 
-# ============================================================================
-# 7. 单因素相关性筛选
-# ============================================================================
 def univariate_correlation(df):
-    """每个候选变量与血糖的Pearson相关分析，返回入选变量列表。"""
     print()
     print(SEP1)
     print("  [单因素相关性] Pearson with " + TARGET)
@@ -199,8 +129,7 @@ def univariate_correlation(df):
             continue
         r, p = stats.pearsonr(temp[var], temp[TARGET])
         results.append({
-            "变量(英文)": var,
-            "变量(中文)": EN2CN.get(var, var),
+            "变量(英文)": var, "变量(中文)": EN2CN.get(var, var),
             "相关系数_r": round(r, 4),
             "p值": "%.4e" % p if p < 0.0001 else "%.4f" % p,
             "显著(p<0.05)": "是" if p < 0.05 else "否",
@@ -215,35 +144,26 @@ def univariate_correlation(df):
     return result_df, selected
 
 
-# ============================================================================
-# 8. LASSO回归筛选
-# ============================================================================
 def lasso_selection(df, candidate_vars):
-    """LASSO + 5折交叉验证，返回选中变量和系数。"""
     print()
     print(SEP1)
     print("  [LASSO回归] 变量筛选")
     print(SEP1)
-    # 分类变量数值编码后用于LASSO
     df_lasso = df[candidate_vars].copy()
     if "性别" in df_lasso.columns:
         df_lasso["性别"] = df_lasso["性别"].map({"男": 1, "女": 0}).fillna(0.5)
     for col in df_lasso.columns:
         if df_lasso[col].dtype == object:
             df_lasso[col] = pd.to_numeric(df_lasso[col], errors="coerce").fillna(0)
-
     X = df_lasso.values
     y = df[TARGET].values
     feature_names = candidate_vars
     scaler = StandardScaler()
     Xs = scaler.fit_transform(X)
-
     lassocv = LassoCV(alphas=np.logspace(-4, 1, 200), cv=5,
                       max_iter=10000, random_state=42, n_jobs=-1)
     lassocv.fit(Xs, y)
-
-    # 自适应搜索：在alpha路径上找出产出6~9个变量的最大lambda
-    alpha_path = lassocv.alphas_  # 递减排列
+    alpha_path = lassocv.alphas_
     min_idx = np.argmin(lassocv.mse_path_.mean(axis=1))
     target_min, target_max = 6, 9
     best_a = None
@@ -268,18 +188,14 @@ def lasso_selection(df, candidate_vars):
                 best_diff = diff
                 best_a = a
                 lasso_final = lasso
-
     sel_idx = np.where(np.abs(lasso_final.coef_) > 1e-6)[0]
     sel_vars = [feature_names[i] for i in sel_idx]
     coef_vals = lasso_final.coef_[sel_idx]
-
     coef_df = pd.DataFrame({
-        "变量(英文)": sel_vars,
-        "变量(中文)": [EN2CN.get(v, v) for v in sel_vars],
+        "变量(英文)": sel_vars, "变量(中文)": [EN2CN.get(v, v) for v in sel_vars],
         "标准化系数": np.round(coef_vals, 6),
         "|系数|": np.round(np.abs(coef_vals), 6)
     }).sort_values("|系数|", ascending=False)
-
     print()
     print("  最优 lambda = %.6f" % best_a)
     print("  >> 选中: %d / %d 个变量" % (len(sel_vars), len(candidate_vars)))
@@ -290,11 +206,7 @@ def lasso_selection(df, candidate_vars):
     return sel_vars, coef_df, best_a
 
 
-# ============================================================================
-# 9. VIF多重共线性分析
-# ============================================================================
 def vif_analysis(df, features, threshold=10):
-    """循环剔除VIF > threshold的变量。"""
     print()
     print(SEP1)
     print("  [VIF分析] 多重共线性（阈值=%d）" % threshold)
@@ -302,11 +214,9 @@ def vif_analysis(df, features, threshold=10):
     if len(features) < 2:
         print("  变量不足2个，跳过")
         return pd.DataFrame(), features
-
     X = df[features].copy()
     X = X.fillna(X.median())
     remaining = features[:]
-
     while len(remaining) >= 2:
         X_sub = X[remaining].values
         vif_vals = []
@@ -327,17 +237,14 @@ def vif_analysis(df, features, threshold=10):
         X = X.drop(columns=[max_var])
         remaining.remove(max_var)
         print("  剔除: %s (VIF=%.2f)" % (EN2CN.get(max_var, max_var), max_vif))
-
     if len(remaining) >= 2:
         Xf = X[remaining].values
         vif_final = pd.DataFrame({
-            "变量(英文)": remaining,
-            "变量(中文)": [EN2CN.get(v, v) for v in remaining],
+            "变量(英文)": remaining, "变量(中文)": [EN2CN.get(v, v) for v in remaining],
             "VIF": [round(variance_inflation_factor(Xf, i), 4) for i in range(len(remaining))]
         }).sort_values("VIF", ascending=False)
     else:
         vif_final = pd.DataFrame()
-
     print()
     print("  最终保留: %d 个 (VIF <= %d)" % (len(remaining), threshold))
     if not vif_final.empty:
@@ -345,11 +252,7 @@ def vif_analysis(df, features, threshold=10):
     return vif_final, remaining
 
 
-# ============================================================================
-# 10. 多元线性回归（statsmodels OLS）
-# ============================================================================
 def multiple_linear_regression(df, predictors):
-    """OLS回归，输出系数表 + 模型拟合指标。"""
     print()
     print(SEP1)
     print("  [多元线性回归] OLS")
@@ -359,7 +262,6 @@ def multiple_linear_regression(df, predictors):
     y = df[TARGET].values
     Xc = add_constant(X)
     model = sm.OLS(y, Xc.astype(float)).fit()
-
     coef_df = pd.DataFrame({
         "变量": model.params.index,
         "变量(中文)": ["截距"] + [EN2CN.get(c, c) for c in list(X.columns)],
@@ -375,7 +277,6 @@ def multiple_linear_regression(df, predictors):
     print()
     print("  回归系数表:")
     print(coef_df.to_string(index=False))
-
     y_pred = model.predict(Xc)
     print()
     print("  模型拟合指标:")
@@ -390,15 +291,11 @@ def multiple_linear_regression(df, predictors):
     return model, coef_df
 
 
-# ============================================================================
-# 11. 主流程
-# ============================================================================
 def main():
     print()
     print(SEP1)
     print("  武汉理工大学数学建模训练 第3题 — 数据预处理与建模分析")
     print(SEP1)
-
     print(SEP2)
     print("  Step 1: 加载数据")
     print(SEP2)
@@ -406,12 +303,10 @@ def main():
     df2 = load_and_rename(CSV2)
     print("  训练集: %d 行 x %d 列" % df1.shape)
     print("  测试集: %d 行 x %d 列" % df2.shape)
-
     print(SEP2)
     print("  Step 2: 缺失值分析")
     print(SEP2)
     analyze_missing(df1, "训练集(填补前)")
-
     print(SEP2)
     print("  Step 3: 缺失值填补（中位数/众数）")
     print(SEP2)
@@ -421,28 +316,21 @@ def main():
     print("  填补后缺失总数: %d" % rem)
     if TARGET in df1_clean.columns and df1_clean[TARGET].isnull().any():
         df1_clean[TARGET] = df1_clean[TARGET].fillna(df1_clean[TARGET].median())
-
     descriptive_stats(df1_clean, "训练集(填补后)")
-
     uni_result, uni_selected = univariate_correlation(df1_clean)
-
     lasso_candidates = uni_selected if len(uni_selected) > 0 else ALL_PREDICTORS_EN
     lasso_sel, lasso_coefs, best_a = lasso_selection(df1_clean, lasso_candidates)
-
     final_vars = lasso_sel if len(lasso_sel) > 0 else uni_selected[:min(10, len(uni_selected))]
     if len(final_vars) == 0:
         final_vars = ALL_PREDICTORS_EN[:min(5, len(ALL_PREDICTORS_EN))]
-
     vif_result, final_vars = vif_analysis(df1_clean, final_vars)
     if len(final_vars) == 0:
         final_vars = lasso_sel[:min(3, len(lasso_sel))]
-
     if len(final_vars) >= 1:
         model, coef_table = multiple_linear_regression(df1_clean, final_vars)
     else:
         print("  无可用预测变量，跳过回归")
         model = None
-
     print()
     print(SEP1)
     print("  最终汇总")

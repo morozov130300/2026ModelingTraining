@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-"""t2.py — 问题2: GAM血糖预测模型（自动比较交互项）"""
 import warnings, os, numpy as np, pandas as pd
 warnings.filterwarnings("ignore")
 import matplotlib; matplotlib.use("Agg")
@@ -59,7 +58,6 @@ def diagnostics(gam, X, y, preds, name="GAM"):
     axs[0,0].plot(osm, slope * osm + intercept, color="#E74C3C", linewidth=1.5)
     axs[0,0].set_title("Q-Q图", fontproperties=_CN_FP)
     axs[0,1].scatter(yp, res, alpha=0.3, s=8); axs[0,1].axhline(0,c="r",ls="--")
-    # x轴范围限定在1%~99%分位数，剔除极端离群值，聚焦主要数据
     x_lo, x_hi = np.percentile(yp, [1, 99])
     axs[0,1].set_xlim(x_lo, x_hi)
     axs[0,1].set_xlabel("拟合值", fontproperties=_CN_FP)
@@ -99,12 +97,10 @@ def plot_partial(gam, X, y, preds, name="GAM"):
     nv = len(preds); nc = min(3, nv); nr = (nv+nc-1)//nc
     fig, axs = plt.subplots(nr, nc, figsize=(5*nc, 4*nr))
     axs = axs.flatten() if nr*nc>1 else [axs]
-    # 交互模型有te()额外项，term索引需要偏移
     n_terms = len(gam.terms)
     is_interact = n_terms > nv
     for i in range(nv):
         ax = axs[i]; vn = VARN.get(preds[i], preds[i])
-        # 计算正确的term索引
         term_i = i if not is_interact or i < 2 else i + 1
         try:
             XX = gam.generate_X_grid(term=term_i)
@@ -119,7 +115,6 @@ def plot_partial(gam, X, y, preds, name="GAM"):
     plt.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR,"问题2_偏效应图_"+name.replace(" ","_")+".png"), dpi=300); plt.close()
     print("  -> 偏效应图已保存")
-
 
 def compare(g1, X, y, preds):
     y1 = g1.predict(X)
@@ -139,7 +134,6 @@ def compare(g1, X, y, preds):
     print("  "+"="*30)
 
 def print_model_params(gam, preds, name="模型"):
-    """输出完整的模型参数表。"""
     s = gam.statistics_
     print("\n  " + "=" * 50)
     print("  [%s] 完整参数表" % name)
@@ -159,7 +153,6 @@ def print_model_params(gam, preds, name="模型"):
     print("    对数似然      = %.2f" % s.get("llf", 0))
     print("\n  各变量平滑项:")
     n_terms = len(gam.terms)
-    # 打印每项的lambda和有效自由度
     for i in range(n_terms):
         lam = gam.lambda_[i] if hasattr(gam, 'lambda_') and i < len(gam.lambda_) else 0
         print("    项%d: lambda=%.6f" % (i, lam))
@@ -169,19 +162,16 @@ def print_model_params(gam, preds, name="模型"):
 def main():
     print("="*72+"\n  问题2: GAM血糖预测模型（自动比较交互项）\n"+"="*72)
     df = load_data(); X, y = df[FINAL_VARS].values, df[TARGET].values
-
     print("="*60+"\n  模型A: 加性GAM（无交互）\n"+"="*60)
     gam_a, X, y, _ = fit_gam(df, FINAL_VARS, k=10, interaction=False)
     aic_a = gam_a.statistics_.get("AIC", 0)
     diagnostics(gam_a, X, y, FINAL_VARS, "加性模型")
     cv_gam(X, y, FINAL_VARS, cv=10)
-
     print("="*60+"\n  模型B: 交互GAM（年龄×TG张量积）\n"+"="*60)
     gam_b, X, y, _ = fit_gam(df, FINAL_VARS, k=10, interaction=True)
     aic_b = gam_b.statistics_.get("AIC", 0)
     daic = aic_a - aic_b
     print("  AIC(加性)=%.2f  AIC(交互)=%.2f  ΔAIC=%.2f" % (aic_a, aic_b, daic))
-
     if daic > 2:
         print("  >> ΔAIC > 2: 交互项显著改善模型 → 采用模型B")
         final_model, final_name = gam_b, "交互模型"
@@ -194,14 +184,12 @@ def main():
         print("  >> |ΔAIC| ≤ 2: 两者无显著差异 → 选加性模型（简约原则）")
         final_model, final_name = gam_a, "加性模型"
         plot_interaction = False
-
     print("\n"+"="*60+"\n  最终模型输出\n"+"="*60)
     print("  最终选择: %s" % final_name)
     diagnostics(final_model, X, y, FINAL_VARS, final_name)
     print_model_params(final_model, FINAL_VARS, "最终交互GAM")
     print_model_params(gam_a, FINAL_VARS, "加性GAM对比")
     plot_partial(final_model, X, y, FINAL_VARS, final_name)
-
     if plot_interaction:
         print("="*60+"\n  交互效应等高线图\n"+"="*60)
         x1g = np.linspace(X[:,0].min(), X[:,0].max(), 50)
@@ -224,11 +212,7 @@ def main():
         print("  -> 交互效应等高线图已保存")
     else:
         print("  交互项未入选，跳过等高线图")
-
-    
-
     compare(final_model, X, y, FINAL_VARS)
-
     print("\n"+"="*72+"\n  完成!\n"+"="*72)
     for f in sorted(os.listdir(OUTPUT_DIR)):
         if f.startswith("问题2"): print("  "+f)
