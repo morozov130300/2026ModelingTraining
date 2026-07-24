@@ -136,6 +136,34 @@ def compare(g1, X, y, preds):
     print("  %-18s %10.2f"%("AIC",g1.statistics_.get("AIC",0)))
     print("  "+"="*30)
 
+def print_model_params(gam, preds, name="模型"):
+    """输出完整的模型参数表。"""
+    s = gam.statistics_
+    print("\n  " + "=" * 50)
+    print("  [%s] 完整参数表" % name)
+    print("  " + "=" * 50)
+    print("  拟合优度指标:")
+    print("    AIC           = %.2f" % s.get("AIC", 0))
+    print("    AICc          = %.2f" % s.get("AICc", 0))
+    print("    GCV           = %.6f" % s.get("GCV", 0))
+    print("    总有效自由度EDF = %.2f" % s.get("edof", 0))
+    print("    尺度参数(scale)= %.6f" % s.get("scale", 0))
+    pr2 = s.get("pseudo_r2", {})
+    if isinstance(pr2, dict):
+        for k, v in pr2.items():
+            print("    伪R²(%s)     = %.6f" % (k, v))
+    else:
+        print("    伪R²          = %.6f" % pr2)
+    print("    对数似然      = %.2f" % s.get("llf", 0))
+    print("\n  各变量平滑项:")
+    n_terms = len(gam.terms)
+    # 打印每项的lambda和有效自由度
+    for i in range(n_terms):
+        lam = gam.lambda_[i] if hasattr(gam, 'lambda_') and i < len(gam.lambda_) else 0
+        print("    项%d: lambda=%.6f" % (i, lam))
+    print("  截距项: β₀ = %.6f" % gam.coef_[0])
+    print("  " + "=" * 50)
+
 def main():
     print("="*72+"\n  问题2: GAM血糖预测模型（自动比较交互项）\n"+"="*72)
     df = load_data(); X, y = df[FINAL_VARS].values, df[TARGET].values
@@ -168,6 +196,8 @@ def main():
     print("\n"+"="*60+"\n  最终模型输出\n"+"="*60)
     print("  最终选择: %s" % final_name)
     diagnostics(final_model, X, y, FINAL_VARS, final_name)
+    print_model_params(final_model, FINAL_VARS, "最终交互GAM")
+    print_model_params(gam_a, FINAL_VARS, "加性GAM对比")
     plot_partial(final_model, X, y, FINAL_VARS, final_name)
 
     if plot_interaction:
