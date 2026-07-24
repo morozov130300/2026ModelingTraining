@@ -1112,7 +1112,8 @@ def main():
     print("    极高风险: PPV=%.1f%%, 强烈建议临床确诊" % (top_ppv*100))
     print("\n  输出文件:")
     for f in sorted(os.listdir(OUTPUT_DIR)):
-        print("    "+f)
+        if not f.endswith(".txt"):  # 只列出图片，排除手动创建的文本文件
+            print("    "+f)
 
 if __name__ == "__main__":
     main()
