@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""从 t1/output 已有结果生成分析报告所需图表（PNG）。
+"""生成分析报告唯一保留的区域任务类型结构图。
+
+从表 3（区域 × 类型任务数）和表 4（区域 × 类型 GPU-hour）读取数据，
+生成按任务数与按 GPU-hour 的双面 100% 堆叠柱状图。
 
 依赖：numpy, pandas, matplotlib（运行 t1.py 时已安装）
 运行：python make_charts.py
-输出：t1/output/charts/*.png
+输出：t1/output/charts/region_task_structure_count_vs_gpuh.png
 """
 
 from __future__ import annotations
@@ -17,149 +20,79 @@ import numpy as np
 import pandas as pd
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE / "output"
-CHART = OUT / "charts"
-CHART.mkdir(parents=True, exist_ok=True)
+STATISTICS = HERE / "output" / "statistics"
+CHARTS = HERE / "output" / "charts"
+CHARTS.mkdir(parents=True, exist_ok=True)
 
-plt.rcParams["axes.unicode_minus"] = False
-plt.rcParams["font.family"] = "DejaVu Sans"
-
-TYPES = ["RealTimeInference", "BatchInference", "AITraining"]
-TYPE_LABEL = {"RealTimeInference": "RealTime", "BatchInference": "Batch", "AITraining": "Training"}
-TYPE_COLOR = {"RealTimeInference": "#4C78A8", "BatchInference": "#F58518", "AITraining": "#54A24B"}
 REGIONS = ["RegionA", "RegionB", "RegionC", "RegionD", "RegionE", "RegionF"]
+TYPES = ["RealTimeInference", "BatchInference", "AITraining"]
+TYPE_LABELS = {"RealTimeInference": "实时推理", "BatchInference": "批量推理", "AITraining": "AI训练"}
+TYPE_COLORS = {"RealTimeInference": "#D62728", "BatchInference": "#FF9F1C", "AITraining": "#2A9D8F"}
 
 
-def load_pivot(name: str) -> pd.DataFrame:
-    df = pd.read_csv(OUT / "statistics" / name, index_col=0)
-    df = df.drop(index="All", errors="ignore")
-    df = df.drop(columns="All", errors="ignore")
-    return df.reindex(columns=TYPES, index=REGIONS)
+def configure_chinese_font() -> None:
+    """优先使用常见中文字体；未发现时由 matplotlib 自动回退。"""
+    candidates = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "Arial Unicode MS"]
+    available = {font.name for font in matplotlib.font_manager.fontManager.ttflist}
+    for font in candidates:
+        if font in available:
+            plt.rcParams["font.family"] = font
+            break
+    plt.rcParams["axes.unicode_minus"] = False
 
 
-def chart_task_type_shares():
-    df = pd.read_csv(OUT / "statistics" / "task_type_summary.csv", index_col=0)
-    df = df.reindex(TYPES)
-    labels = [TYPE_LABEL[t] for t in TYPES]
-    x = np.arange(len(TYPES))
-    width = 0.26
-    fig, ax = plt.subplots(figsize=(9, 5))
-    bars = [
-        (df["TaskCount_Share"] * 100, "Task count", "#4C78A8"),
-        (df["GPU_h_Share"] * 100, "GPU-hour", "#F58518"),
-        (df["IT_MWh_Share"] * 100, "IT energy", "#54A24B"),
-    ]
-    for i, (vals, name, color) in enumerate(bars):
-        ax.bar(x + (i - 1) * width, vals, width, label=name, color=color)
-        for xi, v in zip(x + (i - 1) * width, vals):
-            ax.text(xi, v + 1, f"{v:.1f}%", ha="center", va="bottom", fontsize=8)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels)
-    ax.set_ylabel("Share (%)")
+def load_as_percentage(filename: str) -> pd.DataFrame:
+    data = pd.read_csv(STATISTICS / filename, index_col=0)
+    data = data.drop(index="All", errors="ignore").drop(columns="All", errors="ignore")
+    data = data.reindex(index=REGIONS, columns=TYPES)
+    return data.div(data.sum(axis=1), axis=0) * 100
+
+
+def add_percentage_labels(ax, values: pd.DataFrame) -> None:
+    bottom = np.zeros(len(REGIONS))
+    for task_type in TYPES:
+        segment = values[task_type].to_numpy()
+        for pos, value, start in zip(np.arange(len(REGIONS)), segment, bottom):
+            if value >= 4:
+                ax.text(pos, start + value / 2, f"{value:.1f}%", ha="center", va="center", fontsize=8, color="#1F2937")
+        bottom += segment
+
+
+def draw_stacked_axis(ax, values: pd.DataFrame, title: str) -> None:
+    bottom = np.zeros(len(REGIONS))
+    for task_type in TYPES:
+        segment = values[task_type].to_numpy()
+        ax.bar(REGIONS, segment, bottom=bottom, color=TYPE_COLORS[task_type], width=0.72, label=TYPE_LABELS[task_type])
+        bottom += segment
+    add_percentage_labels(ax, values)
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=10)
+    ax.set_ylabel("占比 (%)")
     ax.set_ylim(0, 100)
-    ax.set_title("Task type shares: count vs GPU-hour vs IT energy")
-    ax.legend()
-    ax.grid(axis="y", alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(CHART / "task_type_shares.png", dpi=180)
+    ax.set_yticks(np.arange(0, 101, 20))
+    ax.grid(axis="y", color="#94A3B8", alpha=0.35, linewidth=0.8)
+    ax.set_axisbelow(True)
+    ax.tick_params(axis="x", labelrotation=0)
+
+
+def main() -> None:
+    configure_chinese_font()
+    count_share = load_as_percentage("region_type_task_count.csv")
+    gpuh_share = load_as_percentage("region_type_gpuh.csv")
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.2, 5.4), sharey=True)
+    draw_stacked_axis(axes[0], count_share, "按任务数")
+    draw_stacked_axis(axes[1], gpuh_share, "按 GPU-hour")
+    axes[1].set_ylabel("")
+
+    handles, labels = axes[1].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 0.93))
+    fig.suptitle("图 2  区域任务类型结构：数量占比 vs 资源占比的反差", fontsize=15, fontweight="bold", y=0.99)
+    fig.tight_layout(rect=(0, 0, 1, 0.88))
+
+    output = CHARTS / "region_task_structure_count_vs_gpuh.png"
+    fig.savefig(output, dpi=220, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-
-
-def chart_region_type_gpuh():
-    df = load_pivot("region_type_gpuh.csv")
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-    bottom = np.zeros(len(REGIONS))
-    for t in TYPES:
-        ax.bar(REGIONS, df[t], bottom=bottom, label=TYPE_LABEL[t], color=TYPE_COLOR[t])
-        bottom += df[t].to_numpy()
-    ax.set_ylabel("GPU-hour")
-    ax.set_title("GPU-hour by region and task type")
-    ax.legend()
-    ax.grid(axis="y", alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(CHART / "region_type_gpuh.png", dpi=180)
-    plt.close(fig)
-
-
-def chart_region_type_energy():
-    df = load_pivot("region_type_it_energy.csv")
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-    bottom = np.zeros(len(REGIONS))
-    for t in TYPES:
-        ax.bar(REGIONS, df[t], bottom=bottom, label=TYPE_LABEL[t], color=TYPE_COLOR[t])
-        bottom += df[t].to_numpy()
-    ax.set_ylabel("IT energy (MWh)")
-    ax.set_title("IT energy by region and task type")
-    ax.legend()
-    ax.grid(axis="y", alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(CHART / "region_type_energy.png", dpi=180)
-    plt.close(fig)
-
-
-def chart_region_structure():
-    df = pd.read_csv(OUT / "statistics" / "region_task_type_share.csv", index_col=0)
-    df = df.reindex(REGIONS)[TYPES]
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-    bottom = np.zeros(len(REGIONS))
-    for t in TYPES:
-        ax.bar(REGIONS, df[t] * 100, bottom=bottom, label=TYPE_LABEL[t], color=TYPE_COLOR[t])
-        bottom += df[t].to_numpy() * 100
-    ax.set_ylabel("Share (%)")
-    ax.set_ylim(0, 100)
-    ax.set_title("Task type structure by region")
-    ax.legend()
-    ax.grid(axis="y", alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(CHART / "region_structure.png", dpi=180)
-    plt.close(fig)
-
-
-def chart_power_margin():
-    df = pd.read_csv(OUT / "statistics" / "it_power_margin_summary.csv", index_col=0)
-    df = df.reindex(REGIONS)
-    x = np.arange(len(REGIONS))
-    width = 0.26
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-    for i, (col, name, color) in enumerate([("min", "Min", "#C0392B"), ("mean", "Mean", "#F39C12"), ("max", "Max", "#27AE60")]):
-        ax.bar(x + (i - 1) * width, df[col], width, label=name, color=color)
-        for xi, v in zip(x + (i - 1) * width, df[col]):
-            ax.text(xi, v + 5, f"{v:.0f}", ha="center", va="bottom", fontsize=8)
-    ax.set_xticks(x)
-    ax.set_xticklabels(REGIONS)
-    ax.set_ylabel("IT power margin (MW)")
-    ax.set_title("IT power margin by region (min / mean / max)")
-    ax.legend()
-    ax.grid(axis="y", alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(CHART / "power_margin.png", dpi=180)
-    plt.close(fig)
-
-
-def chart_forecast_total():
-    df = pd.read_csv(OUT / "forecast" / "predictions_2376_2399.csv")
-    gbdt = df[df["Model"].eq("GBDT")].groupby("Hour")[["Actual_GPU_h", "Predicted_GPU_h"]].sum()
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(gbdt.index, gbdt["Actual_GPU_h"], marker="o", ms=3, label="Actual", color="#C0392B")
-    ax.plot(gbdt.index, gbdt["Predicted_GPU_h"], marker="s", ms=3, label="Predicted (GBDT)", color="#2471A3")
-    ax.set_xlabel("Hour")
-    ax.set_ylabel("GPU-hour")
-    ax.set_title("Forecast vs actual (all regions and task types, 2376-2399)")
-    ax.legend()
-    ax.grid(alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(CHART / "forecast_total.png", dpi=180)
-    plt.close(fig)
-
-
-def main():
-    chart_task_type_shares()
-    chart_region_type_gpuh()
-    chart_region_type_energy()
-    chart_region_structure()
-    chart_power_margin()
-    chart_forecast_total()
-    print(f"图表已生成到 {CHART.resolve()}")
+    print(f"图表已生成：{output.resolve()}")
 
 
 if __name__ == "__main__":
