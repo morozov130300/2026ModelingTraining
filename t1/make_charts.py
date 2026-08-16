@@ -86,8 +86,7 @@ def main() -> None:
 
     handles, labels = axes[1].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 0.93))
-    fig.suptitle("图 2  区域任务类型结构：数量占比 vs 资源占比的反差", fontsize=15, fontweight="bold", y=0.99)
-    fig.tight_layout(rect=(0, 0, 1, 0.88))
+    fig.tight_layout(rect=(0, 0, 1, 0.90))
 
     output = CHARTS / "region_task_structure_count_vs_gpuh.png"
     fig.savefig(output, dpi=220, bbox_inches="tight", facecolor="white")
