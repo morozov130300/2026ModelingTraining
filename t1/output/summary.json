@@ -1,0 +1,38 @@
+{
+  "task_count": 50000,
+  "scheduled_task_count": 50000,
+  "total_GPU_h": 5020786.65,
+  "total_IT_MWh": 738927.9853333334,
+  "migrated_task_count": 0,
+  "average_flexible_wait_h": 0.003906719557639139,
+  "all_constraints_passed": true,
+  "type_summary": [
+    {
+      "TaskType": "RealTimeInference",
+      "TaskCount": 16724,
+      "GPU_h": 228150.13333333333,
+      "IT_MWh": 18252.010666666665,
+      "TaskCount_Share": 0.33448,
+      "GPU_h_Share": 0.04544111296450593,
+      "IT_MWh_Share": 0.024700662349975974
+    },
+    {
+      "TaskType": "BatchInference",
+      "TaskCount": 16717,
+      "GPU_h": 769097.8,
+      "IT_MWh": 76909.78,
+      "TaskCount_Share": 0.33434,
+      "GPU_h_Share": 0.15318272884588713,
+      "IT_MWh_Share": 0.10408291677477297
+    },
+    {
+      "TaskType": "AITraining",
+      "TaskCount": 16559,
+      "GPU_h": 4023538.716666667,
+      "IT_MWh": 643766.1946666667,
+      "TaskCount_Share": 0.33118,
+      "GPU_h_Share": 0.801376158189607,
+      "IT_MWh_Share": 0.871216420875251
+    }
+  ]
+}
