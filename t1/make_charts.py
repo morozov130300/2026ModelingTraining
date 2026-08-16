@@ -30,14 +30,11 @@ TYPE_LABELS = {"RealTimeInference": "实时推理", "BatchInference": "批量推
 TYPE_COLORS = {"RealTimeInference": "#D62728", "BatchInference": "#FF9F1C", "AITraining": "#2A9D8F"}
 
 
-def configure_chinese_font() -> None:
-    """优先使用常见中文字体；未发现时由 matplotlib 自动回退。"""
-    candidates = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "Arial Unicode MS"]
+def configure_fonts() -> None:
+    """英文字母和数字采用 Times New Roman，中文字符采用宋体。"""
     available = {font.name for font in matplotlib.font_manager.fontManager.ttflist}
-    for font in candidates:
-        if font in available:
-            plt.rcParams["font.family"] = font
-            break
+    chinese_font = "SimSun" if "SimSun" in available else "宋体"
+    plt.rcParams["font.family"] = ["Times New Roman", chinese_font]
     plt.rcParams["axes.unicode_minus"] = False
 
 
@@ -75,7 +72,7 @@ def draw_stacked_axis(ax, values: pd.DataFrame, title: str) -> None:
 
 
 def main() -> None:
-    configure_chinese_font()
+    configure_fonts()
     count_share = load_as_percentage("region_type_task_count.csv")
     gpuh_share = load_as_percentage("region_type_gpuh.csv")
 
