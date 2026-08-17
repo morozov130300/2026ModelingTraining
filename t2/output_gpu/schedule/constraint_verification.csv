@@ -1,0 +1,15 @@
+﻿Constraint,ViolationCount,Status,Detail,Scenario
+C1_UniqueAssignment,0,PASS,每个任务恰有一个执行区域,SchemeA
+C2_RealTimeFixedLocal,0,PASS,实时任务本地、到达即开工,SchemeA
+C3_Latency,0,PASS,实际网络时延不超过 SLA,SchemeA
+C4_Deadline,0,PASS,到达与截止时限,SchemeA
+C5_GPUCapacity,0,PASS,逐时 GPU 容量,SchemeA
+C6_ITPower,0,PASS,逐时 IT 功率容量,SchemeA
+C7_NoHour2406,0,PASS,任务不占用第 2406 小时,SchemeA
+C1_UniqueAssignment,0,PASS,每个任务恰有一个执行区域,SchemeB
+C2_RealTimeFixedLocal,0,PASS,实时任务本地、到达即开工,SchemeB
+C3_Latency,0,PASS,实际网络时延不超过 SLA,SchemeB
+C4_Deadline,0,PASS,到达与截止时限,SchemeB
+C5_GPUCapacity,0,PASS,逐时 GPU 容量,SchemeB
+C6_ITPower,0,PASS,逐时 IT 功率容量,SchemeB
+C7_NoHour2406,0,PASS,任务不占用第 2406 小时,SchemeB
