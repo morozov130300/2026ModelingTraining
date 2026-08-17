@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""使用 t2/output_gpu 中已有 CSV 生成与 CPU 版本相同格式的图表。
+"""使用 t2/output_merged 中已有 CSV 重新生成问题二图表。
 
 运行：
     python3 t2/dataToImg.py
 
-显式指定 GPU 输出目录：
+显式指定其他结果目录：
     python3 t2/dataToImg.py --output-dir t2/output_gpu
 """
 
@@ -16,12 +16,12 @@ from pathlib import Path
 
 def parse_args() -> argparse.Namespace:
     here = Path(__file__).resolve().parent
-    parser = argparse.ArgumentParser(description="根据问题二 GPU 版输出 CSV 重新生成图表")
+    parser = argparse.ArgumentParser(description="根据问题二合并输出 CSV 重新生成图表")
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=here / "output_gpu",
-        help="GPU 版结果目录，默认 t2/output_gpu",
+        default=here / "output_merged",
+        help="结果目录，默认 t2/output_merged",
     )
     return parser.parse_args()
 
@@ -65,7 +65,13 @@ def make_plots(output_dir: Path) -> None:
 
     plot_dir = output_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
-    plt.rcParams["axes.unicode_minus"] = False
+    plt.rcParams.update(
+        {
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "SimSun"],
+            "axes.unicode_minus": False,
+        }
+    )
 
     plotted = metrics.dropna(subset=["OperatingCost_CNY"])
     ax = plotted.set_index("Scenario")[["OperatingCost_CNY", "CarbonEmission_tCO2"]].plot(
@@ -82,7 +88,19 @@ def make_plots(output_dir: Path) -> None:
     migration = scheme_b.groupby(
         ["SourceRegion", "ExecRegion"], observed=False
     )["GPU_h"].sum().unstack(fill_value=0)
-    ax = migration.plot(kind="bar", stacked=True, figsize=(11, 5))
+    ax = migration.plot(
+        kind="bar",
+        stacked=True,
+        figsize=(11, 5),
+        color=[
+            "#3E73B5",
+            "#DD6E29",
+            "#4DAF4A",
+            "#F1B744",
+            "#9467BD",
+            "#5BC0BE",
+        ][: len(migration.columns)],
+    )
     ax.set_ylabel("Migrated / executed GPU-hour")
     plt.tight_layout()
     plt.savefig(plot_dir / "migration_flow_by_source.png", dpi=180)
