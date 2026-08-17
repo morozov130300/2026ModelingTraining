@@ -1,0 +1,2 @@
+﻿Scenario,OperatingCost_CNY,CarbonEmission_tCO2,RenewableUtilization,GridPurchase_MWh,GridSell_MWh,Curtailment_MWh,Objective_CNY,MigratedTasks,MigrationRate,WeightedAverageLatency_ms,MaxLatency_ms,AverageFlexibleWait_h
+SchemeB_marginal_benefit_vs_SchemeA,148598.6369049549,0.0,0.6907342730955077,0.0,-673.9538095933385,2758.567706259899,148598.6369049549,-28660.0,0.0,5.0,5.0,1.2472652963096527
