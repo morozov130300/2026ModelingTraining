@@ -93,12 +93,12 @@ def make_plots(output_dir: Path) -> None:
         stacked=True,
         figsize=(11, 5),
         color=[
-            "#3E73B5",
-            "#DD6E29",
-            "#4DAF4A",
+            "#BDC3C7",
             "#F1B744",
-            "#9467BD",
+            "#4DAF4A",
+            "#9ECAE1",
             "#5BC0BE",
+            "#3E73B5",
         ][: len(migration.columns)],
     )
     ax.set_ylabel("Migrated / executed GPU-hour")
