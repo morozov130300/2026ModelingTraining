@@ -58,8 +58,8 @@ def configure_fonts(matplotlib):
 
     matplotlib.rcParams.update(
         {
-            "font.family": selected["zh"].get_name(),
-            "font.serif": [selected["zh"].get_name()],
+            "font.family": [selected["en"].get_name(), selected["zh"].get_name()],
+            "font.serif": [selected["en"].get_name(), selected["zh"].get_name()],
             "axes.unicode_minus": False,
             "figure.facecolor": "#FFFFFF",
             "axes.facecolor": "#FFFFFF",
@@ -454,7 +454,7 @@ def make_alpha_pressure(sensitivity, plot_dir: Path, plt, zh_font, en_font) -> N
             ha="center",
             va="bottom",
             fontsize=12,
-            fontproperties=zh_font,
+            fontproperties=en_font,
             color="#000000",
         )
     bottom_ax.text(
@@ -494,9 +494,9 @@ def make_alpha_pressure(sensitivity, plot_dir: Path, plt, zh_font, en_font) -> N
         color="#000000",
         pad=14,
     )
-    apply_axis_fonts(top_ax, zh_font, en_font)
-    apply_axis_fonts(objective_ax, zh_font, en_font)
-    apply_axis_fonts(bottom_ax, zh_font, en_font)
+    apply_axis_fonts(top_ax, en_font, en_font)
+    apply_axis_fonts(objective_ax, en_font, en_font)
+    apply_axis_fonts(bottom_ax, en_font, en_font)
 
     fig.tight_layout()
     fig.savefig(plot_dir / "alpha_pressure_transmission.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
