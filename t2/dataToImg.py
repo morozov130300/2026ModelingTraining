@@ -301,20 +301,20 @@ def make_scheme_tradeoff_plot(
     global_ax.annotate(
         f"时延 +{latency_delta:.2f} ms（{latency_ratio:.2f} 倍）\n成本改善 {cost_improvement:,.2f} 元（{cost_change_rate:.3f}%）",
         ((latency_a + latency_b) / 2, sum(global_y) / 2), xytext=(0, 82),
-        textcoords="offset points", ha="center", va="bottom", fontsize=14,
-        color="#3F454B", fontproperties=zh_font,
-        bbox={"boxstyle": "round,pad=0.65", "fc": "#FFFFFF", "ec": "#C8C1B3", "lw": 1.1},
+        textcoords="offset points", ha="center", va="bottom", fontsize=15.5,
+        color="#111111", fontproperties=zh_font,
+        bbox={"boxstyle": "round,pad=0.65", "fc": "#FFFFFF", "ec": "#A99F90", "lw": 1.2},
     )
     x_pad = max(latency_delta * 0.22, 3.0)
     y_pad = max(abs(global_y[1] - global_y[0]) * 2.2, 0.11)
     global_ax.set_xlim(latency_a - x_pad, latency_b + x_pad)
     global_ax.set_ylim(min(global_y) - y_pad, max(global_y) + y_pad)
-    global_ax.set_xlabel("GPU-hour 加权平均时延（ms）", fontsize=15, labelpad=14, fontproperties=zh_font)
-    global_ax.set_ylabel("总运行成本（百万元）", fontsize=15, labelpad=16, fontproperties=zh_font)
-    global_ax.set_title("表 11：总体方案权衡", fontsize=18, fontweight="bold", pad=28, color="#000000", fontproperties=zh_font)
+    global_ax.set_xlabel("GPU-hour 加权平均时延（ms）", fontsize=16, labelpad=16, fontproperties=zh_font)
+    global_ax.set_ylabel("总运行成本（百万元）", fontsize=16, labelpad=18, fontproperties=zh_font)
+    global_ax.set_title("表 11：总体方案权衡", fontsize=22, fontweight="bold", pad=34, color="#000000", fontproperties=zh_font)
     global_ax.text(0.5, 1.17, "B 的成本几乎不变，但时延扩大至约 7.5 倍",
                    transform=global_ax.transAxes, ha="center", va="bottom",
-                   fontsize=13.2, color="#636E72", fontproperties=zh_font)
+                   fontsize=14.8, color="#111111", fontproperties=zh_font)
 
     # 右面板：区域级分解，展示“代价形状”，不与总体点混用坐标。
     energy_cost = {
@@ -342,10 +342,10 @@ def make_scheme_tradeoff_plot(
         a = regional["方案 A"].loc[region]
         b = regional["方案 B"].loc[region]
         regional_ax.plot([a["Latency"], b["Latency"]], [a["Cost"], b["Cost"]],
-                         color="#B8B1A5", linewidth=1.0, alpha=0.8, zorder=1)
+                         color="#8F8578", linewidth=1.15, alpha=0.9, zorder=1)
         regional_ax.annotate(region_cn[region], (b["Latency"], b["Cost"]),
-                             xytext=(8, 6), textcoords="offset points", fontsize=10.5,
-                             color="#636E72", fontproperties=zh_font)
+                             xytext=(8, 6), textcoords="offset points", fontsize=12,
+                             color="#222222", fontproperties=zh_font)
 
     for scheme, marker in [("方案 A", "o"), ("方案 B", "D")]:
         part = regional[scheme]
@@ -353,20 +353,20 @@ def make_scheme_tradeoff_plot(
                             s=95 + 165 * (part["GPU_h"] / max(part["GPU_h"].max(), 1)) ** 0.5,
                             color=colors[scheme], edgecolors="white", linewidths=1.2,
                             alpha=0.92, label=scheme, zorder=3)
-    regional_ax.set_xlabel("区域 GPU-hour 加权平均时延（ms）", fontsize=15, labelpad=14, fontproperties=zh_font)
-    regional_ax.set_ylabel("区域运行成本（百万元）", fontsize=15, labelpad=16, fontproperties=zh_font)
-    regional_ax.set_title("区域级代价形状：A → B", fontsize=18, fontweight="bold", pad=28, color="#000000", fontproperties=zh_font)
+    regional_ax.set_xlabel("区域 GPU-hour 加权平均时延（ms）", fontsize=16, labelpad=16, fontproperties=zh_font)
+    regional_ax.set_ylabel("区域运行成本（百万元）", fontsize=16, labelpad=18, fontproperties=zh_font)
+    regional_ax.set_title("区域级代价形状：A → B", fontsize=22, fontweight="bold", pad=34, color="#000000", fontproperties=zh_font)
     regional_ax.legend(prop=zh_font, frameon=False, loc="lower left", bbox_to_anchor=(0.02, 0.01), borderaxespad=0)
     regional_ax.text(0.02, 0.995, "圆点/菱形：区域 A/B；连线：同一区域迁移后的变化；点大小 ∝ GPU-hour",
-                     transform=regional_ax.transAxes, fontsize=12.2, color="#636E72", fontproperties=zh_font, va="top")
+                     transform=regional_ax.transAxes, fontsize=14.2, color="#111111", fontproperties=zh_font, va="top")
 
     for ax in (global_ax, regional_ax):
         apply_tick_font(ax, en_font)
-        ax.tick_params(axis="both", labelsize=13)
-    fig.subplots_adjust(left=0.08, right=0.985, top=0.82, bottom=0.12, wspace=0.28)
+        ax.tick_params(axis="both", labelsize=14, colors="#111111")
+    fig.subplots_adjust(left=0.08, right=0.985, top=0.80, bottom=0.12, wspace=0.28)
     fig.suptitle("方案 A/B 的时延—成本权衡：总体结论与区域代价形状",
-                 fontsize=24, fontweight="bold", color="#000000", y=0.965, fontproperties=zh_font)
-    fig.tight_layout(rect=[0.02, 0.03, 0.985, 0.82])
+                 fontsize=26, fontweight="bold", color="#000000", y=0.965, fontproperties=zh_font)
+    fig.tight_layout(rect=[0.02, 0.03, 0.985, 0.80])
     fig.savefig(plot_dir / "方案甲乙时延成本权衡图.png", dpi=220,
                 bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
