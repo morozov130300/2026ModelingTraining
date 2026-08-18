@@ -524,7 +524,7 @@ def make_plots(out_dir: Path, baseline: pd.DataFrame, scheme1: pd.DataFrame, sch
         ax.plot(part["Hour"], part["NetGridImport_MW"], label="Optimized net import")
         ax.plot(base["Hour"], base["NetGridImport_MW"], label="Baseline net import", alpha=.65)
         ax.set_title(region); ax.grid(alpha=.25)
-    axes.flat[0].legend(fontsize=8); fig.tight_layout(); fig.savefig(plot_dir / "storage_timeseries_96h.png", dpi=180); plt.close(fig)
+    axes.flat[0].legend(fontsize=8); fig.tight_layout(); fig.savefig(plot_dir / "储能时序图_96小时.png", dpi=180); plt.close(fig)
     names = ["AttachmentBaseline", "Scheme1_NoStorage_RenewableFirst", "Scheme2_StorageLP"]
     frames = [baseline, scheme1, scheme2]
     fig, ax = plt.subplots(figsize=(11, 5)); bottom = np.zeros(len(names))
@@ -533,22 +533,22 @@ def make_plots(out_dir: Path, baseline: pd.DataFrame, scheme1: pd.DataFrame, sch
                           ("Curtailment_MW", "Curtailment"), ("GridPurchase_MW", "Grid purchase")]:
         values = np.asarray([frame[column].sum() for frame in frames])
         ax.bar(names, values, bottom=bottom, label=label); bottom += values
-    ax.tick_params(axis="x", rotation=15); ax.legend(ncol=3, fontsize=8); ax.set_ylabel("MWh"); fig.tight_layout(); fig.savefig(plot_dir / "energy_allocation_comparison.png", dpi=180); plt.close(fig)
-    for frontier, filename, x, label in [(peak_frontier, "cost_peak_frontier.png", "PeakNetGridImport_MW", "Peak net import (MW)"),
-                                         (util_frontier, "cost_utilization_frontier.png", "RenewableUtilization", "Renewable utilization")]:
+    ax.tick_params(axis="x", rotation=15); ax.legend(ncol=3, fontsize=8); ax.set_ylabel("MWh"); fig.tight_layout(); fig.savefig(plot_dir / "能源分配对比图.png", dpi=180); plt.close(fig)
+    for frontier, filename, x, label in [(peak_frontier, "成本削峰前沿图.png", "PeakNetGridImport_MW", "Peak net import (MW)"),
+                                         (util_frontier, "成本利用率前沿图.png", "RenewableUtilization", "Renewable utilization")]:
         feasible = frontier[frontier["Feasible"]]
         if not feasible.empty:
             fig, ax = plt.subplots(figsize=(7, 5)); ax.plot(feasible[x], feasible["OperatingCost_CNY"], marker="o")
             ax.set_xlabel(label); ax.set_ylabel("Operating cost (CNY)"); ax.grid(alpha=.25); fig.tight_layout(); fig.savefig(plot_dir / filename, dpi=180); plt.close(fig)
     peak_data = pd.DataFrame({name: frame.groupby("Region")["NetGridImport_MW"].max() for name, frame in zip(names, frames)})
-    peak_data.plot(kind="bar", figsize=(10, 5)); plt.ylabel("Peak net import (MW)"); plt.tight_layout(); plt.savefig(plot_dir / "regional_peak_net_import.png", dpi=180); plt.close()
+    peak_data.plot(kind="bar", figsize=(10, 5)); plt.ylabel("Peak net import (MW)"); plt.tight_layout(); plt.savefig(plot_dir / "区域峰值净购电图.png", dpi=180); plt.close()
     if sensitivity is not None:
         feasible = sensitivity[sensitivity["Feasible"]]
         fig, ax = plt.subplots(figsize=(9, 5))
         for dimension, group in feasible.groupby("Dimension"):
             x = group["CarbonPrice_CNY_per_tCO2"] if dimension == "carbon_price" else (group["CapacityFactor"] if dimension == "capacity_factor" else group["RenewableAlpha"])
             ax.plot(x, group["OperatingCost_CNY"], marker="o", label=dimension)
-        ax.set_ylabel("Operating cost (CNY)"); ax.legend(); ax.grid(alpha=.25); fig.tight_layout(); fig.savefig(plot_dir / "sensitivity_cost.png", dpi=180); plt.close(fig)
+        ax.set_ylabel("Operating cost (CNY)"); ax.legend(); ax.grid(alpha=.25); fig.tight_layout(); fig.savefig(plot_dir / "敏感性成本图.png", dpi=180); plt.close(fig)
 
 
 def main() -> None:

@@ -5,8 +5,8 @@
     python t3/t3p1.py
 
 输出：
-    t3/output/plots/soc_charge_discharge_96h.png
-    t3/output/plots/sensitivity_cost_grid.png
+    t3/output/plots/储能充放电状态图_96小时.png
+    t3/output/plots/敏感性成本购电曲线图.png
 """
 
 from __future__ import annotations
@@ -248,7 +248,7 @@ def make_storage_timeseries_plot(
     )
     fig.tight_layout(rect=[0, 0, 1, 0.935])
     fig.savefig(
-        plot_dir / "soc_charge_discharge_96h.png",
+        plot_dir / "储能充放电状态图_96小时.png",
         dpi=220, bbox_inches="tight", facecolor=fig.get_facecolor(),
     )
     plt.close(fig)
@@ -317,7 +317,7 @@ def make_sensitivity_plot(sensitivity, output_dir: Path, plt, zh_font, en_font) 
     )
     fig.tight_layout(rect=[0, 0, 1, 0.91])
     fig.savefig(
-        plot_dir / "sensitivity_cost_grid.png",
+        plot_dir / "敏感性成本购电曲线图.png",
         dpi=220, bbox_inches="tight", facecolor=fig.get_facecolor(),
     )
     plt.close(fig)

@@ -6,7 +6,7 @@
 
 依赖：numpy, pandas, matplotlib（运行 t1.py 时已安装）
 运行：python make_charts.py
-输出：t1/output/charts/region_task_structure_count_vs_gpuh.png
+输出：t1/output/charts/区域任务类型结构对比图.png
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ def main() -> None:
     fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 0.94), fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.88))
 
-    output = CHARTS / "region_task_structure_count_vs_gpuh.png"
+    output = CHARTS / "区域任务类型结构对比图.png"
     fig.savefig(output, dpi=220, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print(f"图表已生成：{output.resolve()}")

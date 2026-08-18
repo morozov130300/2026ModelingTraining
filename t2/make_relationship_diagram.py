@@ -313,7 +313,7 @@ def generate_svg(output_dir: Path, rows: list[list[float]], layout: dict) -> Pat
 
     plot_dir = output_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
-    output_path = plot_dir / "q2_relationship_framework.svg"
+    output_path = plot_dir / "问题二关系框架图.svg"
     output_path.write_text("\n".join(parts), encoding="utf-8")
     return output_path
 
@@ -476,7 +476,7 @@ def generate_png(output_dir: Path, rows: list[list[float]], layout: dict) -> Pat
 
     plot_dir = output_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
-    output_path = plot_dir / "q2_relationship_framework.png"
+    output_path = plot_dir / "问题二关系框架图.png"
     fig.savefig(output_path, dpi=100)
     plt.close(fig)
     return output_path

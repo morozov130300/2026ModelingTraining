@@ -5,9 +5,9 @@
     python t4/t4p1.py
 
 输出：
-    t4/output/plots/ablation_waterfall_A0_A4.png
-    t4/output/plots/feedback_incumbent_convergence.png
-    t4/output/plots/alpha_pressure_transmission.png
+    t4/output/plots/消融瀑布图_方案零至方案四.png
+    t4/output/plots/反馈收敛与历史最优图.png
+    t4/output/plots/可再生约束压力传导图.png
 """
 
 from __future__ import annotations
@@ -262,7 +262,7 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font, en_font) -> 
         fontsize=11.5,
     )
     fig.subplots_adjust(bottom=0.19, top=0.90)
-    fig.savefig(plot_dir / "ablation_waterfall_A0_A4.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
+    fig.savefig(plot_dir / "消融瀑布图_方案零至方案四.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
     plt.close(fig)
 
 
@@ -333,7 +333,7 @@ def make_feedback_incumbent(convergence, plot_dir: Path, plt, zh_font, en_font) 
     apply_axis_fonts(ax, en_font, en_font)
     ax.legend(loc="best", frameon=False, prop=zh_font, fontsize=12)
     fig.tight_layout()
-    fig.savefig(plot_dir / "feedback_incumbent_convergence.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
+    fig.savefig(plot_dir / "反馈收敛与历史最优图.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
     plt.close(fig)
 
 
@@ -499,7 +499,7 @@ def make_alpha_pressure(sensitivity, plot_dir: Path, plt, zh_font, en_font) -> N
     apply_axis_fonts(bottom_ax, en_font, en_font)
 
     fig.tight_layout()
-    fig.savefig(plot_dir / "alpha_pressure_transmission.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
+    fig.savefig(plot_dir / "可再生约束压力传导图.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
     plt.close(fig)
 
 

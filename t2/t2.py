@@ -363,14 +363,14 @@ def make_plots(out_dir: Path, metrics: pd.DataFrame, scheme_b: pd.DataFrame, usa
     plt.rcParams["axes.unicode_minus"] = False
     plotted = metrics.dropna(subset=["OperatingCost_CNY"])
     ax = plotted.set_index("Scenario")[["OperatingCost_CNY", "CarbonEmission_tCO2"]].plot(kind="bar", secondary_y="CarbonEmission_tCO2", figsize=(10, 5))
-    ax.set_ylabel("Operating cost (CNY)"); ax.right_ax.set_ylabel("Carbon emissions (tCO2)"); plt.tight_layout(); plt.savefig(plot_dir / "scenario_comparison.png", dpi=180); plt.close()
+    ax.set_ylabel("Operating cost (CNY)"); ax.right_ax.set_ylabel("Carbon emissions (tCO2)"); plt.tight_layout(); plt.savefig(plot_dir / "方案成本碳排对比图.png", dpi=180); plt.close()
     migration = scheme_b.groupby(["SourceRegion", "ExecRegion"], observed=False)["GPU_h"].sum().unstack(fill_value=0)
-    ax = migration.plot(kind="bar", stacked=True, figsize=(11, 5)); ax.set_ylabel("Migrated / executed GPU-hour"); plt.tight_layout(); plt.savefig(plot_dir / "migration_flow_by_source.png", dpi=180); plt.close()
+    ax = migration.plot(kind="bar", stacked=True, figsize=(11, 5)); ax.set_ylabel("Migrated / executed GPU-hour"); plt.tight_layout(); plt.savefig(plot_dir / "迁移流向按来源区域汇总图.png", dpi=180); plt.close()
     fig, axes = plt.subplots(3, 2, figsize=(14, 9), sharex=True)
     for axis, region in zip(axes.flat, ctx["regions"]):
         part = usage[(usage["Region"] == region) & usage["Hour"].between(2376, 2405)]
         axis.plot(part["Hour"], part["GPU_Utilization_Percent"]); axis.set_title(region); axis.set_ylabel("GPU utilization (%)"); axis.grid(alpha=.25)
-    fig.tight_layout(); fig.savefig(plot_dir / "gpu_utilization_2376_2405.png", dpi=180); plt.close(fig)
+    fig.tight_layout(); fig.savefig(plot_dir / "图形处理器利用率图_2376至2405.png", dpi=180); plt.close(fig)
 
 
 def run_schedule_cases(cases: list[tuple[str, float, bool]], workload: pd.DataFrame, ctx: dict,

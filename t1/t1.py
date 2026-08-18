@@ -359,13 +359,13 @@ def make_plots(type_summary, margins, predictions, schedule, usage, time_data, r
     shares = type_summary[["TaskCount_Share", "GPU_h_Share", "IT_MWh_Share"]].T * 100
     ax = shares.plot(kind="bar", figsize=(10, 5))
     ax.set_ylabel("Share (%)"); ax.set_xlabel(""); ax.legend(title="Task type"); ax.grid(axis="y", alpha=.25)
-    plt.tight_layout(); plt.savefig(plot_dir / "task_type_shares.png", dpi=180); plt.close()
+    plt.tight_layout(); plt.savefig(plot_dir / "任务类型占比图.png", dpi=180); plt.close()
 
     if predictions is not None:
         total = predictions[predictions["Model"].eq("GBDT")].groupby("Hour")[["Actual_GPU_h", "Predicted_GPU_h"]].sum()
         ax = total.plot(figsize=(10, 5), marker="o")
         ax.set_ylabel("GPU-hour"); ax.set_title("Forecast vs Actual (All regions and task types)", fontsize=15); ax.grid(alpha=.25)
-        plt.tight_layout(); plt.savefig(plot_dir / "forecast_vs_actual_2376_2399.png", dpi=180); plt.close()
+        plt.tight_layout(); plt.savefig(plot_dir / "预测与实际对比图_2376至2399.png", dpi=180); plt.close()
 
     colors = {"RealTimeInference": "#4C78A8", "BatchInference": "#F58518", "AITraining": "#54A24B"}
     last = schedule[(schedule["ArrivalHour"] >= 2376) & (schedule["ArrivalHour"] <= 2399)].copy()
@@ -378,7 +378,7 @@ def make_plots(type_summary, margins, predictions, schedule, usage, time_data, r
     axes[-1].set_xlabel("Hour"); axes[-1].set_xlim(2376, 2406)
     handles = [plt.Rectangle((0, 0), 1, 1, color=colors[t], label=t) for t in TASK_TYPES]
     fig.legend(handles=handles, loc="upper center", ncol=3); fig.tight_layout(rect=(0, 0, 1, .97))
-    fig.savefig(plot_dir / "gantt_2376_2406.png", dpi=180); plt.close(fig)
+    fig.savefig(plot_dir / "调度甘特图_2376至2406.png", dpi=180); plt.close(fig)
 
     baseline = time_data[["Hour", "Region", "GPU_Utilization_Percent"]]
     fig, axes = plt.subplots(3, 2, figsize=(14, 10), sharex=True)
@@ -388,7 +388,7 @@ def make_plots(type_summary, margins, predictions, schedule, usage, time_data, r
         ax.plot(ours["Hour"], ours["GPU_Utilization_Percent"], label="Scheduled")
         ax.plot(base["Hour"], base["GPU_Utilization_Percent"], label="Baseline", alpha=.75)
         ax.set_title(region, fontsize=14); ax.set_ylabel("GPU utilization (%)"); ax.grid(alpha=.2)
-    axes.flat[0].legend(); fig.tight_layout(); fig.savefig(plot_dir / "gpu_utilization_2376_2405.png", dpi=180); plt.close(fig)
+    axes.flat[0].legend(); fig.tight_layout(); fig.savefig(plot_dir / "图形处理器利用率图_2376至2405.png", dpi=180); plt.close(fig)
 
 
 def write_summary(out_dir, workload, schedule, type_summary, verification):

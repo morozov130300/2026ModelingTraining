@@ -238,7 +238,7 @@ def make_migration_combo_plot(scheme_b, plot_dir, plt, pd, zh_font, en_font) -> 
     fig.text((sankey_bounds.x0 + sankey_bounds.x1) / 2, panel_title_y, "跨区迁移流向（流宽 ∝ GPU-hour）", ha="center", va="center", fontsize=18, fontweight="bold", color="#000000", fontproperties=zh_font)
     fig.text((bubble_bounds.x0 + bubble_bounds.x1) / 2, panel_title_y, "迁移富集气泡矩阵", ha="center", va="center", fontsize=18, fontweight="bold", color="#000000", fontproperties=zh_font)
     fig.text(0.5, 0.915, "方案 B · 跨区流动揭示 D/E/F 双向迁移与能源信号退化", ha="center", fontsize=12.5, color="#636E72", fontproperties=zh_font)
-    fig.savefig(plot_dir / "migration_sankey_enrichment.png", dpi=220, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(plot_dir / "迁移桑基与富集气泡图.png", dpi=220, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
 
 
@@ -365,7 +365,7 @@ def make_scheme_tradeoff_plot(
     fig.suptitle("方案 A/B 的时延—成本权衡：总体结论与区域代价形状",
                  fontsize=20, fontweight="bold", color="#000000", y=0.98, fontproperties=zh_font)
     fig.tight_layout(rect=[0, 0, 1, 0.94])
-    fig.savefig(plot_dir / "scheme_ab_latency_cost_tradeoff.png", dpi=220,
+    fig.savefig(plot_dir / "方案甲乙时延成本权衡图.png", dpi=220,
                 bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
 
@@ -435,7 +435,7 @@ def make_plots(merged_dir: Path) -> None:
     apply_tick_font(ax, en_font)
     apply_tick_font(ax.right_ax, en_font)
     plt.tight_layout()
-    plt.savefig(plot_dir / "scenario_comparison.png", dpi=180)
+    plt.savefig(plot_dir / "方案成本碳排对比图.png", dpi=180)
     plt.close()
 
     migration = scheme_b.groupby(["SourceRegion", "ExecRegion"], observed=False)["GPU_h"].sum().unstack(fill_value=0)
@@ -443,7 +443,7 @@ def make_plots(merged_dir: Path) -> None:
     ax.set_ylabel("执行 GPU-hour", fontproperties=zh_font)
     apply_tick_font(ax, en_font)
     plt.tight_layout()
-    plt.savefig(plot_dir / "migration_flow_by_source.png", dpi=180)
+    plt.savefig(plot_dir / "迁移流向按来源区域汇总图.png", dpi=180)
     plt.close()
 
     make_migration_combo_plot(scheme_b, plot_dir, plt, pd, zh_font, en_font)
@@ -464,7 +464,7 @@ def make_plots(merged_dir: Path) -> None:
         apply_tick_font(axis, en_font)
         axis.grid(alpha=0.25)
     fig.tight_layout()
-    fig.savefig(plot_dir / "gpu_utilization_2376_2405.png", dpi=180)
+    fig.savefig(plot_dir / "图形处理器利用率图_2376至2405.png", dpi=180)
     plt.close(fig)
 
     print(f"完成。图表目录：{plot_dir.resolve()}")

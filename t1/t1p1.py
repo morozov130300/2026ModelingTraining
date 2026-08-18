@@ -6,7 +6,7 @@
     python t1p1.py --output-dir output --data-dir ../题目
 
 输入为 t1.py 已生成的 output 目录；若提供 data-dir，则尝试叠加原始基线 GPU 利用率。
-输出：output/plots/t1p1_visualization.png
+输出：output/plots/问题一综合可视化图.png
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=here / "output")
     parser.add_argument("--data-dir", type=Path, default=here.parent / "题目")
-    parser.add_argument("--output-name", default="t1p1_visualization.png")
+    parser.add_argument("--output-name", default="问题一综合可视化图.png")
     return parser.parse_args()
 
 
@@ -198,20 +198,20 @@ def main() -> None:
 
     save_single_plot(
         draw_gantt,
-        output_dir / "gantt_2376_2400.png",
+        output_dir / "调度甘特图_2376至2400.png",
         (16, 7.6),
         schedule,
     )
     save_single_plot(
         draw_utilization,
-        output_dir / "gpu_utilization_2376_2399.png",
+        output_dir / "图形处理器利用率图_2376至2399.png",
         (16, 6.2),
         usage,
         baseline,
     )
     save_single_plot(
         draw_forecast,
-        output_dir / "forecast_vs_actual_2376_2399.png",
+        output_dir / "预测与实际对比图_2376至2399.png",
         (16, 6.2),
         predictions,
     )

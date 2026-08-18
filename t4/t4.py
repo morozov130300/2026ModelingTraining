@@ -709,12 +709,12 @@ def make_plots(out, schedule, energy_frame, convergence, ablation, scenario_fram
         import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     except ImportError: return
     d=out/"plots"; d.mkdir(parents=True,exist_ok=True)
-    convergence.plot(x="Iteration",y="Objective_CNY",marker="o",title="Benders-like feedback convergence",grid=True).get_figure().savefig(d/"convergence.png",dpi=150); plt.close("all")
-    ablation.set_index("Scenario")[["OperatingCost_CNY","CarbonEmission_tCO2","PeakNetGridImport_MW"]].plot(kind="bar",subplots=True,figsize=(12,10),title="A0-A4 ablation"); plt.tight_layout(); plt.savefig(d/"ablation.png",dpi=150); plt.close("all")
+    convergence.plot(x="Iteration",y="Objective_CNY",marker="o",title="Benders-like feedback convergence",grid=True).get_figure().savefig(d/"反馈收敛图.png",dpi=150); plt.close("all")
+    ablation.set_index("Scenario")[["OperatingCost_CNY","CarbonEmission_tCO2","PeakNetGridImport_MW"]].plot(kind="bar",subplots=True,figsize=(12,10),title="A0-A4 ablation"); plt.tight_layout(); plt.savefig(d/"消融分析图.png",dpi=150); plt.close("all")
     for r,g in energy_frame.groupby("Region"):
         g=g[g.Hour.between(0,95)]; plt.plot(g.Hour,g.Total_Load_MW,label=f"{r} load"); plt.plot(g.Hour,g.SOC_MWh,label=f"{r} SOC")
-    plt.legend(ncol=3,fontsize=7); plt.grid(alpha=.2); plt.tight_layout(); plt.savefig(d/"regional_load_soc_96h.png",dpi=150); plt.close("all")
-    scenario_frame.pivot(index="Parameter",columns="Scenario",values="Objective_CNY").plot(marker="o",figsize=(9,5)); plt.grid(alpha=.2); plt.tight_layout(); plt.savefig(d/"scenario_comparison.png",dpi=150); plt.close("all")
+    plt.legend(ncol=3,fontsize=7); plt.grid(alpha=.2); plt.tight_layout(); plt.savefig(d/"区域负荷储能状态图_96小时.png",dpi=150); plt.close("all")
+    scenario_frame.pivot(index="Parameter",columns="Scenario",values="Objective_CNY").plot(marker="o",figsize=(9,5)); plt.grid(alpha=.2); plt.tight_layout(); plt.savefig(d/"敏感性场景对比图.png",dpi=150); plt.close("all")
 
 
 def main():
