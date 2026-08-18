@@ -217,8 +217,8 @@ def generate_svg(output_dir: Path, rows: list[list[float]], layout: dict) -> Pat
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-        '<rect width="100%" height="100%" fill="#fbfaf7"/>',
-        '<style>text{font-family:"Noto Sans CJK SC","Microsoft YaHei","SimHei",sans-serif;fill:#252525}</style>',
+        '<rect width="100%" height="100%" fill="#FFFFFF"/>',
+        '<style>text{font-family:"Noto Sans CJK SC","Microsoft YaHei","SimHei",sans-serif;fill:#000000}</style>',
         svg_text(70, 70, "问题二：碳感知调度的指标关联、建模方法与决策输出", 34, font_weight="700"),
         svg_text(70, 108, f"基于方案B的 {len(rows):,} 条区域—小时记录；方格为 Pearson r，星号表示显著性", 18, fill="#666666"),
         svg_text(matrix_x + len(INDICATORS) * cell / 2, 160, "逐时指标相关性矩阵", 25, font_weight="700", text_anchor="middle"),
@@ -257,7 +257,7 @@ def generate_svg(output_dir: Path, rows: list[list[float]], layout: dict) -> Pat
     for index, (title, subtitle) in enumerate(OUTPUTS):
         y = 235 + index * 155
         parts.extend([
-            f'<rect x="{output_x}" y="{y}" width="{output_w}" height="94" rx="18" fill="#fffdf8" stroke="#c8c8c8" stroke-width="2"/>',
+            f'<rect x="{output_x}" y="{y}" width="{output_w}" height="94" rx="18" fill="#FFFFFF" stroke="#c8c8c8" stroke-width="2"/>',
             f'<circle cx="{output_x}" cy="{y + 47}" r="7" fill="#d43d2f"/>',
             svg_text(output_x + output_w / 2, y + 38, title, 21, text_anchor="middle", font_weight="700"),
             svg_text(output_x + output_w / 2, y + 68, subtitle, 15, text_anchor="middle", fill="#666666"),
@@ -364,13 +364,14 @@ def generate_png(output_dir: Path, rows: list[list[float]], layout: dict) -> Pat
     ax.set_xlim(0, width)
     ax.set_ylim(height, 0)
     ax.axis("off")
-    ax.add_patch(Rectangle((0, 0), width, height, facecolor="#fbfaf7", edgecolor="none"))
+    ax.add_patch(Rectangle((0, 0), width, height, facecolor="#FFFFFF", edgecolor="none"))
+    ax.set_facecolor("#FFFFFF")
 
-    ax.text(70, 70, "问题二：碳感知调度的指标关联、建模方法与决策输出", fontsize=34, fontweight="bold")
+    ax.text(70, 70, "问题二：碳感知调度的指标关联、建模方法与决策输出", fontsize=34, fontweight="bold", color="#000000")
     ax.text(70, 108, f"基于方案B的 {len(rows):,} 条区域—小时记录；方格为 Pearson r，星号表示显著性", fontsize=18, color="#666666")
-    ax.text(matrix_x + len(INDICATORS) * cell / 2, 160, "逐时指标相关性矩阵", fontsize=25, fontweight="bold", ha="center")
-    ax.text(method_x + method_w / 2, 160, "分析与优化方法", fontsize=25, fontweight="bold", ha="center")
-    ax.text(output_x + output_w / 2, 160, "核心决策输出", fontsize=25, fontweight="bold", ha="center")
+    ax.text(matrix_x + len(INDICATORS) * cell / 2, 160, "逐时指标相关性矩阵", fontsize=25, fontweight="bold", ha="center", color="#000000")
+    ax.text(method_x + method_w / 2, 160, "分析与优化方法", fontsize=25, fontweight="bold", ha="center", color="#000000")
+    ax.text(output_x + output_w / 2, 160, "核心决策输出", fontsize=25, fontweight="bold", ha="center", color="#000000")
 
     label_y = matrix_y + len(INDICATORS) * cell + 28
     for index, (label, _) in enumerate(INDICATORS):
@@ -395,16 +396,16 @@ def generate_png(output_dir: Path, rows: list[list[float]], layout: dict) -> Pat
                              facecolor="#ffffff", edgecolor="#c8c8c8", linewidth=2)
         ax.add_patch(box)
         ax.add_patch(plt.Circle((method_x, y + 47), 7, color="#d43d2f"))
-        ax.text(method_x + method_w / 2, y + 38, title, fontsize=21, ha="center", fontweight="bold")
+        ax.text(method_x + method_w / 2, y + 38, title, fontsize=21, ha="center", fontweight="bold", color="#000000")
         ax.text(method_x + method_w / 2, y + 68, subtitle, fontsize=15, ha="center", color="#666666")
 
     for index, (title, subtitle) in enumerate(OUTPUTS):
         y = 235 + index * 155
         box = FancyBboxPatch((output_x, y), output_w, 94, boxstyle="round,pad=0,rounding_size=18",
-                             facecolor="#fffdf8", edgecolor="#c8c8c8", linewidth=2)
+                             facecolor="#FFFFFF", edgecolor="#c8c8c8", linewidth=2)
         ax.add_patch(box)
         ax.add_patch(plt.Circle((output_x, y + 47), 7, color="#d43d2f"))
-        ax.text(output_x + output_w / 2, y + 38, title, fontsize=21, ha="center", fontweight="bold")
+        ax.text(output_x + output_w / 2, y + 38, title, fontsize=21, ha="center", fontweight="bold", color="#000000")
         ax.text(output_x + output_w / 2, y + 68, subtitle, fontsize=15, ha="center", color="#666666")
 
     def draw_curve(x1, y1, x2, y2, color, lw, alpha=0.58, route_offset=0.0):
@@ -459,7 +460,7 @@ def generate_png(output_dir: Path, rows: list[list[float]], layout: dict) -> Pat
             )
 
     legend_y = 1010
-    ax.text(70, legend_y, "图例", fontsize=19, fontweight="bold")
+    ax.text(70, legend_y, "图例", fontsize=19, fontweight="bold", color="#000000")
     ax.add_patch(Rectangle((130, legend_y - 18), 28, 18, facecolor="#dc5c31"))
     ax.text(168, legend_y - 2, "正相关", fontsize=16)
     ax.add_patch(Rectangle((255, legend_y - 18), 28, 18, facecolor="#3978ad"))

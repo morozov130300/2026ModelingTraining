@@ -56,13 +56,13 @@ def configure_fonts() -> None:
     plt.rcParams.update({
         "font.family": [english, chinese],
         "axes.unicode_minus": False,
-        "figure.facecolor": "#F7F9FC",
+        "figure.facecolor": "#FFFFFF",
         "axes.facecolor": "#FFFFFF",
         "axes.edgecolor": "#CBD5E1",
-        "axes.labelcolor": "#243447",
-        "xtick.color": "#475569",
-        "ytick.color": "#475569",
-        "text.color": "#243447",
+        "axes.labelcolor": "#000000",
+        "xtick.color": "#000000",
+        "ytick.color": "#000000",
+        "text.color": "#000000",
         "axes.titleweight": "bold",
     })
 
@@ -112,7 +112,7 @@ def draw_gantt(ax, schedule: pd.DataFrame) -> None:
     ax.invert_yaxis()
     ax.set_xlim(START_HOUR, END_HOUR)
     ax.set_ylabel("执行区域", fontsize=10)
-    ax.set_title("末 24 小时任务排布 · 区域 × 时间 × 类型", loc="left", fontsize=13, pad=28)
+    ax.set_title("末 24 小时任务排布 · 区域 × 时间 × 类型", loc="left", fontsize=13, pad=28, color="#000000")
     ax.axvspan(START_HOUR, END_HOUR, color="#EAF2FF", alpha=0.35, zorder=-2)
     ax.axvline(START_HOUR, color="#1D4ED8", linestyle="--", linewidth=1.1)
     ax.axvline(END_HOUR, color="#1D4ED8", linestyle="--", linewidth=1.1)
@@ -148,7 +148,7 @@ def draw_utilization(ax, usage: pd.DataFrame, baseline: Optional[pd.DataFrame]) 
     ax.set_xlim(START_HOUR, END_HOUR)
     ax.set_ylim(bottom=0)
     ax.set_ylabel("GPU 利用率 (%)", fontsize=10)
-    ax.set_title("六区域 GPU 利用率曲线 · 共享时间轴", loc="left", fontsize=13, pad=10)
+    ax.set_title("六区域 GPU 利用率曲线 · 共享时间轴", loc="left", fontsize=13, pad=10, color="#000000")
     ax.legend(ncol=6, loc="upper center", bbox_to_anchor=(0.5, 1.02), frameon=False, fontsize=8)
     ax.set_xticks(np.arange(START_HOUR, END_HOUR + 1, 4))
     ax.set_xlabel("小时（Hour）", fontsize=10)
@@ -175,7 +175,7 @@ def draw_forecast(ax, predictions: pd.DataFrame) -> None:
     ax.set_xlim(START_HOUR, END_HOUR)
     ax.set_ylabel("GPU-hour", fontsize=10)
     ax.set_xlabel("小时（Hour）", fontsize=10)
-    ax.set_title("2376–2399 预测 vs 实际 · 逐时数据与 3 小时趋势", loc="left", fontsize=13, pad=10)
+    ax.set_title("2376–2399 预测 vs 实际 · 逐时数据与 3 小时趋势", loc="left", fontsize=13, pad=10, color="#000000")
     ax.set_xticks(np.arange(START_HOUR, END_HOUR + 1, 4))
     ax.legend(loc="upper right", frameon=False, ncol=2, fontsize=8)
     style_axis(ax)

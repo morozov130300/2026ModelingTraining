@@ -62,7 +62,7 @@ def draw_stacked_axis(ax, values: pd.DataFrame, title: str) -> None:
         ax.bar(REGIONS, segment, bottom=bottom, color=TYPE_COLORS[task_type], width=0.72, label=TYPE_LABELS[task_type])
         bottom += segment
     add_percentage_labels(ax, values)
-    ax.set_title(title, fontsize=13, fontweight="bold", pad=10)
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=10, color="#000000")
     ax.set_ylabel("占比 (%)")
     ax.set_ylim(0, 100)
     ax.set_yticks(np.arange(0, 101, 20))
@@ -76,7 +76,9 @@ def main() -> None:
     count_share = load_as_percentage("region_type_task_count.csv")
     gpuh_share = load_as_percentage("region_type_gpuh.csv")
 
-    fig, axes = plt.subplots(1, 2, figsize=(13.2, 5.4), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(13.2, 5.4), sharey=True, facecolor="#FFFFFF")
+    for axis in axes:
+        axis.set_facecolor("#FFFFFF")
     draw_stacked_axis(axes[0], count_share, "按任务数")
     draw_stacked_axis(axes[1], gpuh_share, "按 GPU-hour")
     axes[1].set_ylabel("")

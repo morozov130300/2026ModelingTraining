@@ -152,11 +152,29 @@ def prepare_energy_arrays(time_data, storage, regions, alpha=1.0):
 
 
 def initial_signal(energy, carbon_price):
+    """按问题二口径计算无储能基准下的逐时边际供电成本信号。
+
+    新能源富余且超过外送上限时，增加任务只会减少弃电，边际成本为 0；
+    富余不超过外送上限时，增加任务会减少外送，边际成本为售电机会成本；
+    新能源不足时，边际成本为购电成本加碳价成本。
+    """
     signal = {}
     for r, a in energy.items():
-        # 免费新能源优先；缺口小时使用经济成本+碳成本作为初始边际信号。
-        signal[r] = np.maximum(0.0, a["price"] + carbon_price * a["carbon"]) * a["storage"]["PUE"]
-        signal[r][a["renewable"] > a["nonai"] * a["storage"]["PUE"]] = 0.0
+        total = a["nonai"] * float(a["storage"]["PUE"])
+        renewable = a["renewable"] * float(a.get("alpha", 1.0))
+        surplus = np.maximum(0.0, renewable - total)
+        shortage = np.maximum(0.0, total - renewable)
+        export_limit = float(a["storage"]["MaxGridExport_MW"])
+        opportunity = np.where(
+            (surplus > EPS) & (surplus <= export_limit + EPS),
+            a["sell_price"],
+            0.0,
+        )
+        signal[r] = np.where(
+            shortage > EPS,
+            a["price"] + carbon_price * a["carbon"],
+            opportunity,
+        )
     return signal
 
 
@@ -323,20 +341,14 @@ def _relaunch_from_local_copy():
 
 
 def run_independent_schedules(workload, gpu, energy, latency_map, args):
-    base_signal = {r: np.zeros(HORIZON) for r in REGIONS}
-    arrival_signal = {
-        r: np.repeat(
-            float(np.mean(energy[r]["price"] + args.carbon_price * energy[r]["carbon"]))
-            * float(gpu.loc[r, "PUE"]),
-            HORIZON,
-        )
-        for r in REGIONS
-    }
+    base_signal = _neutral_signal(energy)
     joint_signal = initial_signal(energy, args.carbon_price)
     jobs = [
         ("A0", workload, gpu, energy, latency_map, base_signal,
          args.window_hours, args.batch_size, "local"),
-        ("A1", workload, gpu, energy, latency_map, arrival_signal,
+        # A1 与 A2 使用同一问题二口径的逐时边际能源信号；
+        # 两者只在是否允许弹性任务时间平移上区分。
+        ("A1", workload, gpu, energy, latency_map, joint_signal,
          args.window_hours, args.batch_size, "arrival"),
         ("A2", workload, gpu, energy, latency_map, joint_signal,
          args.window_hours, args.batch_size, "joint"),
@@ -715,7 +727,8 @@ def main():
     print("阶段 4/5：执行约束验证并写入主结果……", flush=True)
     verification=verify(a4,a4_energy,workload,gpu,storage,latency_map)
     if (verification.ViolationCount>0).any(): raise AssertionError("问题四约束验证失败")
-    a4.to_csv(out/"schedule"/"schedule_A4.csv",index=False,encoding="utf-8-sig"); a4_energy.to_csv(out/"energy"/"energy_A4.csv",index=False,encoding="utf-8-sig"); a3_energy.to_csv(out/"energy"/"energy_A3.csv",index=False,encoding="utf-8-sig")
+    a4.to_csv(out/"schedule"/"schedule_A4.csv",index=False,encoding="utf-8-sig"); a3_energy.to_csv(out/"energy"/"energy_A3.csv",index=False,encoding="utf-8-sig"); a4_energy.to_csv(out/"energy"/"energy_A4.csv",index=False,encoding="utf-8-sig")
+    a0.to_csv(out/"schedule"/"schedule_A0.csv",index=False,encoding="utf-8-sig"); a1.to_csv(out/"schedule"/"schedule_A1.csv",index=False,encoding="utf-8-sig"); a2.to_csv(out/"schedule"/"schedule_A2.csv",index=False,encoding="utf-8-sig")
     verification.to_csv(out/"reports"/"constraint_verification.csv",index=False,encoding="utf-8-sig"); ablation.to_csv(out/"reports"/"ablation_A0_A4.csv",index=False,encoding="utf-8-sig"); convergence.to_csv(out/"reports"/"convergence.csv",index=False,encoding="utf-8-sig")
     sens=[]
     if not args.skip_sensitivity:

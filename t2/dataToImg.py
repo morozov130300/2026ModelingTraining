@@ -157,12 +157,12 @@ def make_migration_combo_plot(scheme_b, plot_dir, plt, pd, zh_font, en_font) -> 
     source_share = flow["GPU_h"] / flow["SourceRegion"].map(migration_total)
     flow["source_share"] = source_share.fillna(0)
 
-    fig = plt.figure(figsize=(19, 9.8), facecolor="#FCFBF7")
+    fig = plt.figure(figsize=(19, 9.8), facecolor="#FFFFFF")
     grid = fig.add_gridspec(1, 2, width_ratios=[1.18, 1], wspace=0.18)
     sankey_ax = fig.add_subplot(grid[0, 0])
     bubble_ax = fig.add_subplot(grid[0, 1])
     for ax in (sankey_ax, bubble_ax):
-        ax.set_facecolor("#FCFBF7")
+        ax.set_facecolor("#FFFFFF")
 
     # 左：源区域—执行区域迁移桑基图。两列节点分开，避免自循环遮挡方向。
     y_pos = {region: len(regions) - 1 - i for i, region in enumerate(regions)}
@@ -186,9 +186,9 @@ def make_migration_combo_plot(scheme_b, plot_dir, plt, pd, zh_font, en_font) -> 
         sankey_ax.add_patch(Rectangle((0.80, y), 0.07, 0.68, color=colors[region], alpha=0.95, zorder=3))
         sankey_ax.text(0.105, y + 0.34, region_cn[region], ha="right", va="center", fontsize=12, color="#2D3436", fontproperties=zh_font)
         sankey_ax.text(0.885, y + 0.34, region_cn[region], ha="left", va="center", fontsize=12, color="#2D3436", fontproperties=zh_font)
-    sankey_ax.text(0.155, 6.23, "来源区域", ha="center", va="bottom", fontsize=14, fontweight="bold", color="#25313B", fontproperties=zh_font)
-    sankey_ax.text(0.835, 6.23, "执行区域", ha="center", va="bottom", fontsize=14, fontweight="bold", color="#25313B", fontproperties=zh_font)
-    sankey_ax.text(0.50, 6.23, "跨区迁移流向（流宽 ∝ GPU-hour）", ha="center", va="bottom", fontsize=16, fontweight="bold", color="#25313B", fontproperties=zh_font)
+    sankey_ax.text(0.155, 6.23, "来源区域", ha="center", va="bottom", fontsize=14, fontweight="bold", color="#000000", fontproperties=zh_font)
+    sankey_ax.text(0.835, 6.23, "执行区域", ha="center", va="bottom", fontsize=14, fontweight="bold", color="#000000", fontproperties=zh_font)
+    sankey_ax.text(0.50, 6.23, "跨区迁移流向（流宽 ∝ GPU-hour）", ha="center", va="bottom", fontsize=16, fontweight="bold", color="#000000", fontproperties=zh_font)
     sankey_ax.text(0.50, -0.52, f"跨区迁移 GPU-hour：{flow['GPU_h'].sum():,.0f}；实时任务保持本地，未绘入跨区流带", ha="center", va="top", fontsize=10.5, color="#636E72", fontproperties=zh_font)
     sankey_ax.set_xlim(0, 1)
     sankey_ax.set_ylim(-0.8, 6.8)
@@ -212,7 +212,7 @@ def make_migration_combo_plot(scheme_b, plot_dir, plt, pd, zh_font, en_font) -> 
     bubble_ax.set_yticks(np.arange(len(regions)), [region_cn[r] for r in regions], fontsize=11, fontproperties=zh_font)
     bubble_ax.set_xlabel("执行区域", fontsize=13, labelpad=10, fontproperties=zh_font)
     bubble_ax.set_ylabel("来源区域", fontsize=13, labelpad=10, fontproperties=zh_font)
-    bubble_ax.set_title("迁移富集气泡矩阵", fontsize=16, fontweight="bold", pad=17, color="#25313B", fontproperties=zh_font)
+    bubble_ax.set_title("迁移富集气泡矩阵", fontsize=16, fontweight="bold", pad=17, color="#000000", fontproperties=zh_font)
     bubble_ax.set_xlim(-0.6, 5.6)
     bubble_ax.set_ylim(5.6, -0.6)
     bubble_ax.set_aspect("equal")
@@ -228,7 +228,7 @@ def make_migration_combo_plot(scheme_b, plot_dir, plt, pd, zh_font, en_font) -> 
     colorbar.set_label("占源区域迁移总量比例", fontsize=10.5, fontproperties=zh_font)
     colorbar.ax.tick_params(labelsize=9)
 
-    fig.suptitle("问题二：迁移方向与 GPU-hour 富集结构", fontsize=21, fontweight="bold", color="#1F2D3D", y=0.975, fontproperties=zh_font)
+    fig.suptitle("问题二：迁移方向与 GPU-hour 富集结构", fontsize=21, fontweight="bold", color="#000000", y=0.975, fontproperties=zh_font)
     fig.text(0.5, 0.925, "方案 B · 跨区流动揭示 D/E/F 双向迁移与能源信号退化", ha="center", fontsize=11.5, color="#636E72", fontproperties=zh_font)
     fig.subplots_adjust(top=0.84, bottom=0.12)
     fig.savefig(plot_dir / "migration_sankey_enrichment.png", dpi=220, bbox_inches="tight", facecolor=fig.get_facecolor())
@@ -264,11 +264,11 @@ def make_scheme_tradeoff_plot(
     cost_change_rate = abs(cost_delta) / abs(cost_a) * 100
 
     fig, (global_ax, regional_ax) = plt.subplots(
-        1, 2, figsize=(16, 7.8), facecolor="#FCFBF7",
+        1, 2, figsize=(16, 7.8), facecolor="#FFFFFF",
         gridspec_kw={"width_ratios": [1.0, 1.15]},
     )
     for ax in (global_ax, regional_ax):
-        ax.set_facecolor("#FCFBF7")
+        ax.set_facecolor("#FFFFFF")
         ax.grid(True, linestyle="--", linewidth=0.7, alpha=0.28)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
@@ -296,7 +296,7 @@ def make_scheme_tradeoff_plot(
         ((latency_a + latency_b) / 2, sum(global_y) / 2), xytext=(0, 46),
         textcoords="offset points", ha="center", va="bottom", fontsize=11.5,
         color="#3F454B", fontproperties=zh_font,
-        bbox={"boxstyle": "round,pad=0.5", "fc": "#FFFDF7", "ec": "#C8C1B3", "lw": 1.0},
+        bbox={"boxstyle": "round,pad=0.5", "fc": "#FFFFFF", "ec": "#C8C1B3", "lw": 1.0},
     )
     x_pad = max(latency_delta * 0.17, 3.0)
     y_pad = max(abs(global_y[1] - global_y[0]) * 1.65, 0.08)
@@ -304,7 +304,7 @@ def make_scheme_tradeoff_plot(
     global_ax.set_ylim(min(global_y) - y_pad, max(global_y) + y_pad)
     global_ax.set_xlabel("GPU-hour 加权平均时延（ms）", fontproperties=zh_font)
     global_ax.set_ylabel("总运行成本（百万元）", fontproperties=zh_font)
-    global_ax.set_title("表 11：总体方案权衡", fontsize=16, fontweight="bold", pad=14, fontproperties=zh_font)
+    global_ax.set_title("表 11：总体方案权衡", fontsize=16, fontweight="bold", pad=14, color="#000000", fontproperties=zh_font)
     global_ax.text(0.5, 1.02, "B 的成本几乎不变，但时延扩大至约 7.5 倍",
                    transform=global_ax.transAxes, ha="center", va="bottom",
                    fontsize=10.5, color="#636E72", fontproperties=zh_font)
@@ -348,7 +348,7 @@ def make_scheme_tradeoff_plot(
                             alpha=0.88, label=scheme, zorder=3)
     regional_ax.set_xlabel("区域 GPU-hour 加权平均时延（ms）", fontproperties=zh_font)
     regional_ax.set_ylabel("区域运行成本（百万元）", fontproperties=zh_font)
-    regional_ax.set_title("区域级代价形状：A → B", fontsize=16, fontweight="bold", pad=14, fontproperties=zh_font)
+    regional_ax.set_title("区域级代价形状：A → B", fontsize=16, fontweight="bold", pad=14, color="#000000", fontproperties=zh_font)
     regional_ax.legend(prop=zh_font, frameon=False, loc="best")
     regional_ax.text(0.02, 0.02, "圆点/菱形：区域 A/B；连线：同一区域迁移后的变化；点大小 ∝ GPU-hour",
                      transform=regional_ax.transAxes, fontsize=9.5, color="#636E72", fontproperties=zh_font)
@@ -356,7 +356,7 @@ def make_scheme_tradeoff_plot(
     for ax in (global_ax, regional_ax):
         apply_tick_font(ax, en_font)
     fig.suptitle("方案 A/B 的时延—成本权衡：总体结论与区域代价形状",
-                 fontsize=20, fontweight="bold", color="#1F2D3D", y=0.98, fontproperties=zh_font)
+                 fontsize=20, fontweight="bold", color="#000000", y=0.98, fontproperties=zh_font)
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     fig.savefig(plot_dir / "scheme_ab_latency_cost_tradeoff.png", dpi=220,
                 bbox_inches="tight", facecolor=fig.get_facecolor())
@@ -413,12 +413,15 @@ def make_plots(merged_dir: Path) -> None:
         {
             "axes.unicode_minus": False,
             "figure.dpi": 120,
+            "figure.facecolor": "#FFFFFF",
+            "axes.facecolor": "#FFFFFF",
+            "axes.titlecolor": "#000000",
         }
     )
 
     plotted = metrics.dropna(subset=["OperatingCost_CNY"])
     ax = plotted.set_index("Scenario")[["OperatingCost_CNY", "CarbonEmission_tCO2"]].plot(
-        kind="bar", secondary_y="CarbonEmission_tCO2", figsize=(10, 5)
+        kind="bar", secondary_y="CarbonEmission_tCO2", figsize=(10, 5),
     )
     ax.set_ylabel("运行成本（元）", fontproperties=zh_font)
     ax.right_ax.set_ylabel("碳排放（tCO2）", fontproperties=zh_font)
@@ -445,11 +448,11 @@ def make_plots(merged_dir: Path) -> None:
     regions = usage["Region"].drop_duplicates().tolist()
     if len(regions) != 6:
         raise ValueError(f"{usage_path} 应包含 6 个区域，实际为 {len(regions)} 个: {regions}")
-    fig, axes = plt.subplots(3, 2, figsize=(14, 9), sharex=True)
+    fig, axes = plt.subplots(3, 2, figsize=(14, 9), sharex=True, facecolor="#FFFFFF")
     for axis, region in zip(axes.flat, regions):
         part = usage[(usage["Region"] == region) & usage["Hour"].between(2376, 2405)]
         axis.plot(part["Hour"], part["GPU_Utilization_Percent"])
-        axis.set_title(region, fontproperties=en_font)
+        axis.set_title(region, color="#000000", fontproperties=en_font)
         axis.set_ylabel("GPU 利用率（%）", fontproperties=zh_font)
         apply_tick_font(axis, en_font)
         axis.grid(alpha=0.25)
