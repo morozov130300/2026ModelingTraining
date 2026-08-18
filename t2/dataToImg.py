@@ -229,11 +229,15 @@ def make_migration_combo_plot(scheme_b, plot_dir, plt, pd, zh_font, en_font) -> 
     colorbar.set_label("占源区域迁移总量比例", fontsize=10.5, fontproperties=zh_font)
     colorbar.ax.tick_params(labelsize=9)
 
-    fig.suptitle("问题二：迁移方向与 GPU-hour 富集结构", fontsize=23, fontweight="bold", color="#000000", y=0.965, ha="center", fontproperties=zh_font)
-    fig.text(0.275, 0.835, "跨区迁移流向（流宽 ∝ GPU-hour）", ha="center", va="center", fontsize=18, fontweight="bold", color="#000000", fontproperties=zh_font)
-    fig.text(0.735, 0.835, "迁移富集气泡矩阵", ha="center", va="center", fontsize=18, fontweight="bold", color="#000000", fontproperties=zh_font)
-    fig.text(0.5, 0.915, "方案 B · 跨区流动揭示 D/E/F 双向迁移与能源信号退化", ha="center", fontsize=12.5, color="#636E72", fontproperties=zh_font)
     fig.subplots_adjust(top=0.80, bottom=0.12)
+    sankey_bounds = sankey_ax.get_position()
+    bubble_bounds = bubble_ax.get_position()
+    panel_title_y = max(sankey_bounds.y1, bubble_bounds.y1) + 0.035
+
+    fig.suptitle("问题二：迁移方向与 GPU-hour 富集结构", fontsize=23, fontweight="bold", color="#000000", y=0.965, ha="center", fontproperties=zh_font)
+    fig.text((sankey_bounds.x0 + sankey_bounds.x1) / 2, panel_title_y, "跨区迁移流向（流宽 ∝ GPU-hour）", ha="center", va="center", fontsize=18, fontweight="bold", color="#000000", fontproperties=zh_font)
+    fig.text((bubble_bounds.x0 + bubble_bounds.x1) / 2, panel_title_y, "迁移富集气泡矩阵", ha="center", va="center", fontsize=18, fontweight="bold", color="#000000", fontproperties=zh_font)
+    fig.text(0.5, 0.915, "方案 B · 跨区流动揭示 D/E/F 双向迁移与能源信号退化", ha="center", fontsize=12.5, color="#636E72", fontproperties=zh_font)
     fig.savefig(plot_dir / "migration_sankey_enrichment.png", dpi=220, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
 

@@ -163,8 +163,8 @@ def draw_forecast(ax, predictions: pd.DataFrame) -> None:
     actual_smooth = group["Actual_GPU_h"].rolling(window=3, center=True, min_periods=1).mean().to_numpy()
     predicted_smooth = group["Predicted_GPU_h"].rolling(window=3, center=True, min_periods=1).mean().to_numpy()
 
-    ax.plot(hours, actual, color="#94A3B8", linewidth=0.9, alpha=0.38, label="实际值（逐时）")
-    ax.plot(hours, predicted, color="#93C5FD", linewidth=0.9, alpha=0.42,
+    ax.plot(hours, actual, color="#475569", linewidth=1.05, alpha=0.58, label="实际值（逐时）")
+    ax.plot(hours, predicted, color="#3B82F6", linewidth=1.05, alpha=0.60,
             linestyle="--", label="预测值（逐时）")
     ax.plot(hours, actual_smooth, color="#111827", linewidth=2.5, marker="o", markersize=3.4,
             label="实际趋势（3小时均值）")
