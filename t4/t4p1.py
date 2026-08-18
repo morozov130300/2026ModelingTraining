@@ -198,7 +198,7 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font, en_font) -> 
             delta = float(improvements.loc[scenario])
             label = "0" if abs(delta) < 1 else f"+{format_million(delta)}"
             y = bar.get_y() + bar.get_height() + 1.5
-            font_prop = en_font if index > 0 else zh_font
+            font_prop = en_font
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             y,
@@ -330,7 +330,7 @@ def make_feedback_incumbent(convergence, plot_dir: Path, plt, zh_font, en_font) 
     )
     ax.grid(color="#D9E2EC", linewidth=0.8, alpha=0.85)
     ax.spines[["top", "right"]].set_visible(False)
-    apply_axis_fonts(ax, zh_font, en_font)
+    apply_axis_fonts(ax, en_font, en_font)
     ax.legend(loc="best", frameon=False, prop=zh_font, fontsize=12)
     fig.tight_layout()
     fig.savefig(plot_dir / "feedback_incumbent_convergence.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
