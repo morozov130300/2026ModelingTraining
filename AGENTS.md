@@ -12,9 +12,20 @@
 
 仓库当前没有依赖清单、自动化测试、lint 配置或构建系统。不要在本地工作区创建虚拟环境或安装 Python 库；用户会在其他环境中运行 `.py` 文件。这里只记录运行所需的依赖，供外部运行环境准备：`numpy`、`pandas`、`openpyxl`、`scikit-learn`、`matplotlib`。
 
+## 智能体执行身份与本地运行禁令
+
+- 本智能体只负责读取原题、分析方案、编写和静态检查代码，不负责在当前本地环境运行 Python 程序。
+- **禁止使用本地 Python 运行任何 `.py` 文件、内联 Python、Python 模块或 Python 解释器命令**，包括但不限于 `python`、`python3`、`python -m`、`python -c`、`python - <<'PY'`、`py_compile` 以及导入项目模块进行测试。
+- **禁止在当前本地环境安装任何库或依赖**，包括但不限于 `pip install`、`pip3 install`、`uv add`、`conda install`、系统包管理器安装 Python 依赖，以及创建或修改虚拟环境。
+- 不得因为需要验证代码而绕过上述规则；本地只允许进行文本级读取、搜索、编辑和不依赖 Python 运行时的静态核对。
+- 所有 Python 代码的实际运行、依赖准备、模型训练、LP 求解、数据处理和结果生成均由用户在其他 Python 环境中完成。
+- 问题四的 LP 子问题和敏感性场景已设计为可并行执行；用户可在外部环境通过 `--workers N` 指定并发工作线程数。当前智能体不得在本地执行 Python 脚本或验证命令。
+
 ## 环境与常用命令
 
-要求 Python 3.9+。执行 Python 脚本前，请在用户指定的外部环境中准备上述依赖；不要在当前项目环境中执行 `pip install`、创建 `.venv` 或修改本地依赖配置。
+要求 Python 3.9+。执行 Python 脚本前，请在用户指定的外部环境中准备上述依赖；**当前智能体不得在本地执行 Python 脚本、Python 语法检查或依赖安装**。
+
+这里的命令仅供用户在其他 Python 环境中执行，当前智能体不得执行：
 
 从仓库根目录运行完整问题一流程：
 
@@ -40,22 +51,15 @@ python t1/t1.py --data-dir 题目 --output-dir t1/output --skip-forecast --skip-
 python t1/make_charts.py
 ```
 
-只做语法检查：
+问题四代码运行示例（仅供用户在其他环境执行）：
 
 ```bash
-python -m py_compile t1/t1.py t1/make_charts.py
+python t4/t4.py --data-dir 题目 --output-dir t4/output --workers 6 --skip-plots
 ```
 
-当前没有测试套件，因此没有“单个测试”命令。修改纯函数时，可从仓库根目录用内联 Python 做聚焦检查，例如：
+`--workers 8` 同时并行区域 LP 或敏感性场景；默认值固定为 8，适配当前 8 核 CPU。只有显式传入 `--workers N` 时才覆盖默认并发数。
 
-```bash
-python - <<'PY'
-from t1.t1 import overlap_arrays
-hours, overlaps = overlap_arrays(3, 1.5)
-assert hours.tolist() == [3, 4]
-assert overlaps.tolist() == [1.0, 0.5]
-PY
-```
+问题四所需依赖还包括：`scipy`。当前没有测试套件；任何 Python 语法检查、聚焦测试和完整运行均由用户在其他环境中执行。
 
 ## 核心架构与数据流
 
