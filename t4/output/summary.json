@@ -72,17 +72,17 @@
     {
       "Scenario": "A4",
       "TaskCount": 50000,
-      "MigratedTasks": 0,
-      "WeightedAverageLatency_ms": 5.0,
-      "MaxLatency_ms": 5.0,
-      "OperatingCost_CNY": -459236582.35943776,
+      "MigratedTasks": 22,
+      "WeightedAverageLatency_ms": 5.0567103530147675,
+      "MaxLatency_ms": 76.0,
+      "OperatingCost_CNY": -459306737.8561421,
       "CarbonEmission_tCO2": 0.0,
-      "Objective_CNY": -459236582.35943776,
+      "Objective_CNY": -459306737.8561421,
       "GridPurchase_MWh": 0.0,
-      "GridSell_MWh": 1491812.6699658209,
-      "Curtailment_MWh": 3521342.102713768,
+      "GridSell_MWh": 1492164.21923125,
+      "Curtailment_MWh": 3525772.9922607625,
       "PeakNetGridImport_MW": 0.0,
-      "RenewableUtilization": 0.6951421764366706
+      "RenewableUtilization": 0.6947585751550158
     }
   ]
 }

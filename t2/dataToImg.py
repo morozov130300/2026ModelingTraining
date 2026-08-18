@@ -184,12 +184,13 @@ def make_migration_combo_plot(scheme_b, plot_dir, plt, pd, zh_font, en_font) -> 
         y = y_pos[region]
         sankey_ax.add_patch(Rectangle((0.12, y), 0.07, 0.68, color=colors[region], alpha=0.95, zorder=3))
         sankey_ax.add_patch(Rectangle((0.80, y), 0.07, 0.68, color=colors[region], alpha=0.95, zorder=3))
-        sankey_ax.text(0.105, y + 0.34, region_cn[region], ha="right", va="center", fontsize=12, color="#2D3436", fontproperties=zh_font)
-        sankey_ax.text(0.885, y + 0.34, region_cn[region], ha="left", va="center", fontsize=12, color="#2D3436", fontproperties=zh_font)
-    sankey_ax.text(0.155, 6.23, "来源区域", ha="center", va="bottom", fontsize=14, fontweight="bold", color="#000000", fontproperties=zh_font)
-    sankey_ax.text(0.835, 6.23, "执行区域", ha="center", va="bottom", fontsize=14, fontweight="bold", color="#000000", fontproperties=zh_font)
-    sankey_ax.text(0.50, 6.23, "跨区迁移流向（流宽 ∝ GPU-hour）", ha="center", va="bottom", fontsize=16, fontweight="bold", color="#000000", fontproperties=zh_font)
-    sankey_ax.text(0.50, -0.52, f"跨区迁移 GPU-hour：{flow['GPU_h'].sum():,.0f}；实时任务保持本地，未绘入跨区流带", ha="center", va="top", fontsize=10.5, color="#636E72", fontproperties=zh_font)
+        sankey_ax.text(0.105, y + 0.34, region_cn[region], ha="right", va="center", fontsize=13, color="#2D3436", fontproperties=zh_font)
+        sankey_ax.text(0.885, y + 0.34, region_cn[region], ha="left", va="center", fontsize=13, color="#2D3436", fontproperties=zh_font)
+    sankey_ax.text(0.155, 6.05, "来源区域", ha="center", va="bottom", fontsize=20, fontweight="bold", color="#000000", fontproperties=zh_font)
+    sankey_ax.text(0.835, 6.05, "执行区域", ha="center", va="bottom", fontsize=20, fontweight="bold", color="#000000", fontproperties=zh_font)
+    # 分标题使用图级坐标，避免关闭坐标轴后被子图布局压缩。
+    sankey_ax.set_title("")
+    sankey_ax.text(0.50, -0.52, f"跨区迁移 GPU-hour：{flow['GPU_h'].sum():,.0f}；实时任务保持本地，未绘入跨区流带", ha="center", va="top", fontsize=11.5, color="#636E72", fontproperties=zh_font)
     sankey_ax.set_xlim(0, 1)
     sankey_ax.set_ylim(-0.8, 6.8)
     sankey_ax.axis("off")
@@ -207,12 +208,12 @@ def make_migration_combo_plot(scheme_b, plot_dir, plt, pd, zh_font, en_font) -> 
     for i in range(len(regions)):
         for j in range(len(regions)):
             if values[i, j] > 0:
-                bubble_ax.text(j, i, _format_gpuh(values[i, j]), ha="center", va="center", fontsize=8.5, color="#2D3436", zorder=4)
-    bubble_ax.set_xticks(np.arange(len(regions)), [region_cn[r] for r in regions], fontsize=11, fontproperties=zh_font)
-    bubble_ax.set_yticks(np.arange(len(regions)), [region_cn[r] for r in regions], fontsize=11, fontproperties=zh_font)
-    bubble_ax.set_xlabel("执行区域", fontsize=13, labelpad=10, fontproperties=zh_font)
-    bubble_ax.set_ylabel("来源区域", fontsize=13, labelpad=10, fontproperties=zh_font)
-    bubble_ax.set_title("迁移富集气泡矩阵", fontsize=16, fontweight="bold", pad=17, color="#000000", fontproperties=zh_font)
+                bubble_ax.text(j, i, _format_gpuh(values[i, j]), ha="center", va="center", fontsize=10, color="#2D3436", zorder=4)
+    bubble_ax.set_xticks(np.arange(len(regions)), [region_cn[r] for r in regions], fontsize=12, fontproperties=zh_font)
+    bubble_ax.set_yticks(np.arange(len(regions)), [region_cn[r] for r in regions], fontsize=12, fontproperties=zh_font)
+    bubble_ax.set_xlabel("执行区域", fontsize=18, labelpad=13, fontproperties=zh_font)
+    bubble_ax.set_ylabel("来源区域", fontsize=18, labelpad=13, fontproperties=zh_font)
+    bubble_ax.set_title("")
     bubble_ax.set_xlim(-0.6, 5.6)
     bubble_ax.set_ylim(5.6, -0.6)
     bubble_ax.set_aspect("equal")
@@ -228,9 +229,11 @@ def make_migration_combo_plot(scheme_b, plot_dir, plt, pd, zh_font, en_font) -> 
     colorbar.set_label("占源区域迁移总量比例", fontsize=10.5, fontproperties=zh_font)
     colorbar.ax.tick_params(labelsize=9)
 
-    fig.suptitle("问题二：迁移方向与 GPU-hour 富集结构", fontsize=21, fontweight="bold", color="#000000", y=0.975, fontproperties=zh_font)
-    fig.text(0.5, 0.925, "方案 B · 跨区流动揭示 D/E/F 双向迁移与能源信号退化", ha="center", fontsize=11.5, color="#636E72", fontproperties=zh_font)
-    fig.subplots_adjust(top=0.84, bottom=0.12)
+    fig.suptitle("问题二：迁移方向与 GPU-hour 富集结构", fontsize=23, fontweight="bold", color="#000000", y=0.965, ha="center", fontproperties=zh_font)
+    fig.text(0.275, 0.835, "跨区迁移流向（流宽 ∝ GPU-hour）", ha="center", va="center", fontsize=18, fontweight="bold", color="#000000", fontproperties=zh_font)
+    fig.text(0.735, 0.835, "迁移富集气泡矩阵", ha="center", va="center", fontsize=18, fontweight="bold", color="#000000", fontproperties=zh_font)
+    fig.text(0.5, 0.915, "方案 B · 跨区流动揭示 D/E/F 双向迁移与能源信号退化", ha="center", fontsize=12.5, color="#636E72", fontproperties=zh_font)
+    fig.subplots_adjust(top=0.80, bottom=0.12)
     fig.savefig(plot_dir / "migration_sankey_enrichment.png", dpi=220, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
 

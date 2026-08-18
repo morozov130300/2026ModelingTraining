@@ -51,7 +51,7 @@ def add_percentage_labels(ax, values: pd.DataFrame) -> None:
         segment = values[task_type].to_numpy()
         for pos, value, start in zip(np.arange(len(REGIONS)), segment, bottom):
             if value >= 4:
-                ax.text(pos, start + value / 2, f"{value:.1f}%", ha="center", va="center", fontsize=8, color="#1F2937")
+                ax.text(pos, start + value / 2, f"{value:.1f}%", ha="center", va="center", fontsize=10, color="#1F2937")
         bottom += segment
 
 
@@ -62,10 +62,11 @@ def draw_stacked_axis(ax, values: pd.DataFrame, title: str) -> None:
         ax.bar(REGIONS, segment, bottom=bottom, color=TYPE_COLORS[task_type], width=0.72, label=TYPE_LABELS[task_type])
         bottom += segment
     add_percentage_labels(ax, values)
-    ax.set_title(title, fontsize=13, fontweight="bold", pad=10, color="#000000")
-    ax.set_ylabel("占比 (%)")
+    ax.set_title(title, fontsize=16, fontweight="bold", pad=12, color="#000000")
+    ax.set_ylabel("占比 (%)", fontsize=12)
     ax.set_ylim(0, 100)
     ax.set_yticks(np.arange(0, 101, 20))
+    ax.tick_params(axis="both", labelsize=11)
     ax.grid(axis="y", color="#94A3B8", alpha=0.35, linewidth=0.8)
     ax.set_axisbelow(True)
     ax.tick_params(axis="x", labelrotation=0)
@@ -76,7 +77,7 @@ def main() -> None:
     count_share = load_as_percentage("region_type_task_count.csv")
     gpuh_share = load_as_percentage("region_type_gpuh.csv")
 
-    fig, axes = plt.subplots(1, 2, figsize=(13.2, 5.4), sharey=True, facecolor="#FFFFFF")
+    fig, axes = plt.subplots(1, 2, figsize=(14.5, 6.2), sharey=True, facecolor="#FFFFFF")
     for axis in axes:
         axis.set_facecolor("#FFFFFF")
     draw_stacked_axis(axes[0], count_share, "按任务数")
@@ -84,8 +85,8 @@ def main() -> None:
     axes[1].set_ylabel("")
 
     handles, labels = axes[1].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 0.93))
-    fig.tight_layout(rect=(0, 0, 1, 0.90))
+    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 0.94), fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.88))
 
     output = CHARTS / "region_task_structure_count_vs_gpuh.png"
     fig.savefig(output, dpi=220, bbox_inches="tight", facecolor="white")

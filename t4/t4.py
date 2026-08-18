@@ -535,6 +535,11 @@ def feedback_schedule(workload, gpu, energy, latency_map, args, initial=None, pr
     schedule = None
     energy_frame = None
     energy_results = None
+    best_schedule = None
+    best_energy_frame = None
+    best_energy_results = None
+    best_objective = float("inf")
+    best_iteration = None
     total_iterations = int(args.max_iterations)
     for iteration in range(total_iterations):
         iteration_label = (
@@ -551,7 +556,20 @@ def feedback_schedule(workload, gpu, energy, latency_map, args, initial=None, pr
             print(f"{iteration_label} | 任务调度完成，开始区域能源 LP", flush=True)
         energy_results, energy_frame = solve_energy(schedule, energy, gpu, None, args.carbon_price, args.renewable_alpha, args.workers)
         objective=float(sum(x["objective"] for x in energy_results.values()))
-        history.append({"Iteration":iteration+1,"Objective_CNY":objective,"ScheduledTasks":len(schedule),"SignalMean":float(np.mean([v.mean() for v in signal.values()]))})
+        if objective < best_objective - EPS:
+            best_schedule = schedule.copy()
+            best_energy_frame = energy_frame.copy()
+            best_energy_results = energy_results
+            best_objective = objective
+            best_iteration = iteration + 1
+        history.append({
+            "Iteration": iteration + 1,
+            "Objective_CNY": objective,
+            "ScheduledTasks": len(schedule),
+            "SignalMean": float(np.mean([v.mean() for v in signal.values()])),
+            "BestObjective_CNY": best_objective,
+            "BestIteration": best_iteration,
+        })
         relative_change = None if previous_obj is None else abs(objective-previous_obj)/max(abs(objective),1.0)
         if iteration_label:
             if relative_change is None:
@@ -566,7 +584,13 @@ def feedback_schedule(workload, gpu, energy, latency_map, args, initial=None, pr
         signal={r:energy_results[r]["shadow_price"] for r in gpu.index}
         if iteration_label and iteration + 1 < total_iterations:
             print(f"{iteration_label} | 未收敛，更新影子价格进入下一轮", flush=True)
-    return schedule, energy_frame, energy_results, pd.DataFrame(history)
+    if progress_label and best_iteration != len(history):
+        print(
+            f"{progress_label} | 输出历史最优第{best_iteration}轮方案，"
+            f"目标值={best_objective:.6f}",
+            flush=True,
+        )
+    return best_schedule, best_energy_frame, best_energy_results, pd.DataFrame(history)
 
 
 def _scenario_label(kind, parameter):

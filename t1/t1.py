@@ -346,7 +346,15 @@ def make_plots(type_summary, margins, predictions, schedule, usage, time_data, r
 
     plot_dir = out_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
-    plt.rcParams["axes.unicode_minus"] = False
+    plt.rcParams.update({
+        "axes.unicode_minus": False,
+        "font.size": 11,
+        "axes.titlesize": 15,
+        "axes.labelsize": 12,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 10,
+    })
 
     shares = type_summary[["TaskCount_Share", "GPU_h_Share", "IT_MWh_Share"]].T * 100
     ax = shares.plot(kind="bar", figsize=(10, 5))
@@ -356,7 +364,7 @@ def make_plots(type_summary, margins, predictions, schedule, usage, time_data, r
     if predictions is not None:
         total = predictions[predictions["Model"].eq("GBDT")].groupby("Hour")[["Actual_GPU_h", "Predicted_GPU_h"]].sum()
         ax = total.plot(figsize=(10, 5), marker="o")
-        ax.set_ylabel("GPU-hour"); ax.set_title("Forecast vs Actual (All regions and task types)"); ax.grid(alpha=.25)
+        ax.set_ylabel("GPU-hour"); ax.set_title("Forecast vs Actual (All regions and task types)", fontsize=15); ax.grid(alpha=.25)
         plt.tight_layout(); plt.savefig(plot_dir / "forecast_vs_actual_2376_2399.png", dpi=180); plt.close()
 
     colors = {"RealTimeInference": "#4C78A8", "BatchInference": "#F58518", "AITraining": "#54A24B"}
@@ -379,7 +387,7 @@ def make_plots(type_summary, margins, predictions, schedule, usage, time_data, r
         base = baseline[(baseline["Region"].eq(region)) & baseline["Hour"].between(2376, 2405)]
         ax.plot(ours["Hour"], ours["GPU_Utilization_Percent"], label="Scheduled")
         ax.plot(base["Hour"], base["GPU_Utilization_Percent"], label="Baseline", alpha=.75)
-        ax.set_title(region); ax.set_ylabel("GPU utilization (%)"); ax.grid(alpha=.2)
+        ax.set_title(region, fontsize=14); ax.set_ylabel("GPU utilization (%)"); ax.grid(alpha=.2)
     axes.flat[0].legend(); fig.tight_layout(); fig.savefig(plot_dir / "gpu_utilization_2376_2405.png", dpi=180); plt.close(fig)
 
 

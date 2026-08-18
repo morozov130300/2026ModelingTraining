@@ -108,24 +108,24 @@ def draw_gantt(ax, schedule: pd.DataFrame) -> None:
                     edgecolor="white", linewidth=0.35, alpha=0.94)
 
     ax.set_yticks(range(len(REGIONS)))
-    ax.set_yticklabels([f"{r}  ·  {counts.get(r, 0):,}项" for r in REGIONS], fontsize=9)
+    ax.set_yticklabels([f"{r}  ·  {counts.get(r, 0):,}项" for r in REGIONS], fontsize=11)
     ax.invert_yaxis()
     ax.set_xlim(START_HOUR, END_HOUR)
-    ax.set_ylabel("执行区域", fontsize=10)
-    ax.set_title("末 24 小时任务排布 · 区域 × 时间 × 类型", loc="left", fontsize=13, pad=28, color="#000000")
+    ax.set_ylabel("执行区域", fontsize=12)
+    ax.set_title("末 24 小时任务排布 · 区域 × 时间 × 类型", loc="left", fontsize=16, pad=30, color="#000000")
     ax.axvspan(START_HOUR, END_HOUR, color="#EAF2FF", alpha=0.35, zorder=-2)
     ax.axvline(START_HOUR, color="#1D4ED8", linestyle="--", linewidth=1.1)
     ax.axvline(END_HOUR, color="#1D4ED8", linestyle="--", linewidth=1.1)
     ax.set_xticks(np.arange(START_HOUR, END_HOUR + 1, 4))
-    ax.set_xticklabels([str(x) for x in np.arange(START_HOUR, END_HOUR + 1, 4)])
-    ax.set_xlabel("小时（Hour）", fontsize=10)
+    ax.set_xticklabels([str(x) for x in np.arange(START_HOUR, END_HOUR + 1, 4)], fontsize=11)
+    ax.set_xlabel("小时（Hour）", fontsize=12)
     ax.grid(axis="x", color="#CBD5E1", alpha=0.5, linewidth=0.75)
     ax.grid(axis="y", visible=False)
     style_axis(ax)
 
     handles = [patches.Patch(facecolor=TYPE_COLORS[t], label=TYPE_LABELS[t]) for t in TASK_TYPES]
     ax.legend(handles=handles, ncol=3, loc="lower center", bbox_to_anchor=(0.5, 1.01),
-              frameon=False, fontsize=9, borderaxespad=0.0)
+              frameon=False, fontsize=11, borderaxespad=0.0)
 
 
 def draw_utilization(ax, usage: pd.DataFrame, baseline: Optional[pd.DataFrame]) -> None:
@@ -147,11 +147,11 @@ def draw_utilization(ax, usage: pd.DataFrame, baseline: Optional[pd.DataFrame]) 
     ax.axvline(END_HOUR, color="#1D4ED8", linestyle="--", linewidth=1.1)
     ax.set_xlim(START_HOUR, END_HOUR)
     ax.set_ylim(bottom=0)
-    ax.set_ylabel("GPU 利用率 (%)", fontsize=10)
-    ax.set_title("六区域 GPU 利用率曲线 · 共享时间轴", loc="left", fontsize=13, pad=10, color="#000000")
-    ax.legend(ncol=6, loc="upper center", bbox_to_anchor=(0.5, 1.02), frameon=False, fontsize=8)
+    ax.set_ylabel("GPU 利用率 (%)", fontsize=12)
+    ax.set_title("六区域 GPU 利用率曲线 · 共享时间轴", loc="left", fontsize=16, pad=12, color="#000000")
+    ax.legend(ncol=6, loc="upper center", bbox_to_anchor=(0.5, 1.02), frameon=False, fontsize=10)
     ax.set_xticks(np.arange(START_HOUR, END_HOUR + 1, 4))
-    ax.set_xlabel("小时（Hour）", fontsize=10)
+    ax.set_xlabel("小时（Hour）", fontsize=12)
     style_axis(ax)
 
 
@@ -173,11 +173,11 @@ def draw_forecast(ax, predictions: pd.DataFrame) -> None:
     ax.axvline(START_HOUR, color="#1D4ED8", linestyle="--", linewidth=1.1)
     ax.axvline(END_HOUR, color="#1D4ED8", linestyle="--", linewidth=1.1)
     ax.set_xlim(START_HOUR, END_HOUR)
-    ax.set_ylabel("GPU-hour", fontsize=10)
-    ax.set_xlabel("小时（Hour）", fontsize=10)
-    ax.set_title("2376–2399 预测 vs 实际 · 逐时数据与 3 小时趋势", loc="left", fontsize=13, pad=10, color="#000000")
+    ax.set_ylabel("GPU-hour", fontsize=12)
+    ax.set_xlabel("小时（Hour）", fontsize=12)
+    ax.set_title("2376–2399 预测 vs 实际 · 逐时数据与 3 小时趋势", loc="left", fontsize=16, pad=12, color="#000000")
     ax.set_xticks(np.arange(START_HOUR, END_HOUR + 1, 4))
-    ax.legend(loc="upper right", frameon=False, ncol=2, fontsize=8)
+    ax.legend(loc="upper right", frameon=False, ncol=2, fontsize=10)
     style_axis(ax)
 
 
@@ -199,7 +199,7 @@ def main() -> None:
     save_single_plot(
         draw_gantt,
         output_dir / "gantt_2376_2400.png",
-        (16, 7.2),
+        (16, 7.6),
         schedule,
     )
     save_single_plot(
