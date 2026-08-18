@@ -16,6 +16,10 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 import json
 import math
 import os
+import shutil
+import subprocess
+import sys
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -52,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--window-hours", type=int, default=48, help="外层滚动候选窗口")
     p.add_argument("--batch-size", type=int, default=2000, help="滚动调度的任务批规模")
     p.add_argument("--max-iterations", type=int, default=3)
-    p.add_argument("--workers", type=int, default=max(1, os.cpu_count() or 1), help="并行工作线程数；默认锁定为本机全部逻辑 CPU")
+    p.add_argument("--workers", type=int, default=min(8, max(1, os.cpu_count() or 1)), help="并行工作进程数；8核机器默认使用8个 worker")
     p.add_argument("--convergence-tol", type=float, default=1e-3)
     p.add_argument("--renewable-alpha", type=float, default=1.0)
     p.add_argument("--renewable-scale", type=float, default=1.0)
@@ -156,7 +160,7 @@ def initial_signal(energy, carbon_price):
     return signal
 
 
-def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, batch_size, mode="joint"):
+def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, batch_size, mode="joint", progress_label=None):
     """滚动窗口贪心外层；实时任务严格本地、到达即执行。"""
     regions = list(gpu.index)
     ri = {r: i for i, r in enumerate(regions)}
@@ -206,6 +210,11 @@ def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, ba
                 return None
             span = max(1, int(math.ceil(duration - EPS)))
             offsets = np.arange(span, dtype=np.int64)
+            starts_array = starts_array[
+                starts_array + span - 1 <= LAST_EXEC_HOUR
+            ]
+            if starts_array.size == 0:
+                return None
             hours_matrix = starts_array[:, None] + offsets[None, :]
             overlap_template = np.maximum(
                 0.0,
@@ -271,7 +280,11 @@ def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, ba
                         "GPU_h": demand * duration, "IT_MWh": demand * duration * rate,
                         "MaxLatency_ms": float(row.MaxLatency_ms), "ActualLatency_ms": latency_map[(source, r)],
                         "LatestFinishHour": float(row.LatestFinishHour)})
-        if number % batch_size == 0: print(f"外层调度进度: {number}/{len(tasks)}", flush=True)
+        if progress_label and number % batch_size == 0:
+            print(
+                f"{progress_label} 外层调度进度: {number}/{len(tasks)}",
+                flush=True,
+            )
     if failed:
         raise RuntimeError(f"外层调度有 {len(failed)} 个任务失败；首个任务 {failed[0]}")
     schedule = pd.DataFrame(records).sort_values("TaskID").reset_index(drop=True)
@@ -281,7 +294,32 @@ def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, ba
 def _schedule_case_job(args):
     label, workload, gpu, energy, latency_map, signals, window_hours, batch_size, mode = args
     return label, schedule_tasks(workload, gpu, energy, latency_map, signals,
-                                 window_hours, batch_size, mode=mode)
+                                 window_hours, batch_size, mode=mode,
+                                 progress_label=label)
+
+
+def _running_from_unc_path():
+    """Windows 网络共享路径无法保证 spawn 子进程可重新读取主脚本。"""
+    return str(Path(__file__).resolve()).startswith(("\\\\", "//"))
+
+
+def _relaunch_from_local_copy():
+    """从 UNC 启动时复制主脚本到本地临时目录，启用 Windows 进程池。"""
+    if not _running_from_unc_path() or os.environ.get("T4_LOCAL_COPY") == "1":
+        return False
+    source = Path(__file__).resolve()
+    temp_dir = Path(tempfile.mkdtemp(prefix="t4_local_"))
+    local_script = temp_dir / "t4.py"
+    shutil.copy2(source, local_script)
+    arguments = list(sys.argv[1:])
+    if "--data-dir" not in arguments:
+        arguments.extend(["--data-dir", str(source.parent.parent / "题目")])
+    if "--output-dir" not in arguments:
+        arguments.extend(["--output-dir", str(source.parent / "output")])
+    env = os.environ.copy()
+    env["T4_LOCAL_COPY"] = "1"
+    subprocess.run([sys.executable, str(local_script), *arguments], check=True, env=env)
+    return True
 
 
 def run_independent_schedules(workload, gpu, energy, latency_map, args):
@@ -303,11 +341,13 @@ def run_independent_schedules(workload, gpu, energy, latency_map, args):
         ("A2", workload, gpu, energy, latency_map, joint_signal,
          args.window_hours, args.batch_size, "joint"),
     ]
-    max_workers = min(max(1, int(args.workers)), len(jobs))
+    max_workers = min(8, max(1, int(args.workers)), len(jobs))
+    # UNC 启动时已由本地副本重新执行，因此这里可以安全使用进程池。
+    executor_type = ProcessPoolExecutor
     if max_workers == 1:
         solved = [_schedule_case_job(job) for job in jobs]
     else:
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with executor_type(max_workers=max_workers) as executor:
             futures = [executor.submit(_schedule_case_job, job) for job in jobs]
             solved = [future.result() for future in as_completed(futures)]
     return dict(solved)
@@ -421,18 +461,106 @@ def solve_energy(schedule, energy, gpu, storage, carbon_price, alpha, workers=1)
     return results, pd.concat(frames, ignore_index=True)
 
 
-def feedback_schedule(workload, gpu, energy, latency_map, args, initial=None):
+def _capacity_infeasible_error(error):
+    return isinstance(error, RuntimeError) and "capacity infeasible" in str(error)
+
+
+def _neutral_signal(energy):
+    return {region: np.zeros(HORIZON) for region in energy}
+
+
+def _schedule_with_fallback(
+    workload, gpu, energy, latency_map, signal, args, progress_label,
+    previous_schedule=None,
+):
+    try:
+        return schedule_tasks(
+            workload, gpu, energy, latency_map, signal,
+            args.window_hours, args.batch_size, mode="joint",
+            progress_label=progress_label,
+        )
+    except RuntimeError as error:
+        if not _capacity_infeasible_error(error):
+            raise
+        if previous_schedule is not None:
+            if progress_label:
+                print(
+                    f"{progress_label} | 新影子价格导致构造式调度不可行，"
+                    "回退到上一轮完整可行任务方案",
+                    flush=True,
+                )
+            return previous_schedule.copy(), None, None
+        fallback_attempts = [
+            ("初始边际成本信号", initial_signal(energy, args.carbon_price), "joint"),
+            ("中性成本信号", _neutral_signal(energy), "joint"),
+            ("到达优先可行性调度", _neutral_signal(energy), "arrival"),
+        ]
+        for fallback_index, (fallback_name, fallback_signal, fallback_mode) in enumerate(
+            fallback_attempts, 1
+        ):
+            if progress_label:
+                print(
+                    f"{progress_label} | 容量候选不可行，执行第{fallback_index}次回退："
+                    f"{fallback_name}",
+                    flush=True,
+                )
+            try:
+                return schedule_tasks(
+                    workload, gpu, energy, latency_map, fallback_signal,
+                    args.window_hours, args.batch_size, mode=fallback_mode,
+                    progress_label=progress_label,
+                )
+            except RuntimeError as fallback_error:
+                if not _capacity_infeasible_error(fallback_error):
+                    raise
+        raise error
+
+
+def feedback_schedule(workload, gpu, energy, latency_map, args, initial=None, progress_label="A4"):
     signal = initial or initial_signal(energy, args.carbon_price)
-    previous_obj=None; history=[]; schedule=None; energy_frame=None; energy_results=None
-    for iteration in range(args.max_iterations):
-        schedule, used_gpu, used_it = schedule_tasks(workload, gpu, energy, latency_map, signal, args.window_hours, args.batch_size, mode="joint")
+    previous_obj = None
+    history = []
+    schedule = None
+    energy_frame = None
+    energy_results = None
+    total_iterations = int(args.max_iterations)
+    for iteration in range(total_iterations):
+        iteration_label = (
+            f"{progress_label} | 反馈迭代 {iteration + 1}/{total_iterations}"
+            if progress_label else None
+        )
+        if iteration_label:
+            print(f"{iteration_label} | 开始任务调度", flush=True)
+        schedule, used_gpu, used_it = _schedule_with_fallback(
+            workload, gpu, energy, latency_map, signal, args,
+            iteration_label, previous_schedule=schedule,
+        )
+        if iteration_label:
+            print(f"{iteration_label} | 任务调度完成，开始区域能源 LP", flush=True)
         energy_results, energy_frame = solve_energy(schedule, energy, gpu, None, args.carbon_price, args.renewable_alpha, args.workers)
         objective=float(sum(x["objective"] for x in energy_results.values()))
         history.append({"Iteration":iteration+1,"Objective_CNY":objective,"ScheduledTasks":len(schedule),"SignalMean":float(np.mean([v.mean() for v in signal.values()]))})
-        if previous_obj is not None and abs(objective-previous_obj)/max(abs(objective),1.0) < args.convergence_tol: break
+        relative_change = None if previous_obj is None else abs(objective-previous_obj)/max(abs(objective),1.0)
+        if iteration_label:
+            if relative_change is None:
+                print(f"{iteration_label} | LP 完成，目标值={objective:.6f}，继续反馈", flush=True)
+            else:
+                print(f"{iteration_label} | LP 完成，目标值={objective:.6f}，相对变化={relative_change:.6g}", flush=True)
+        if relative_change is not None and relative_change < args.convergence_tol:
+            if iteration_label:
+                print(f"{iteration_label} | 已收敛，停止反馈迭代", flush=True)
+            break
         previous_obj=objective
         signal={r:energy_results[r]["shadow_price"] for r in gpu.index}
+        if iteration_label and iteration + 1 < total_iterations:
+            print(f"{iteration_label} | 未收敛，更新影子价格进入下一轮", flush=True)
     return schedule, energy_frame, energy_results, pd.DataFrame(history)
+
+
+def _scenario_label(kind, parameter):
+    if kind == "renewable_minus_20_percent":
+        return "新能源-20%"
+    return f"{kind}={parameter:g}"
 
 
 def _run_sensitivity_job(spec):
@@ -459,8 +587,13 @@ def _run_sensitivity_job(spec):
         for value in scenario_energy.values():
             value["renewable"] = value["renewable"] * 0.8
         metric_price = float(args.carbon_price)
-    schedule, frame, _, history = feedback_schedule(workload, gpu, scenario_energy, latency_map, local)
-    return {"Scenario": kind, "Parameter": parameter, **metrics(kind, schedule, frame, metric_price)}
+    label = _scenario_label(kind, parameter)
+    schedule, frame, _, history = feedback_schedule(
+        workload, gpu, scenario_energy, latency_map, local,
+        progress_label=None,
+    )
+    result = {"Scenario": kind, "Parameter": parameter, **metrics(kind, schedule, frame, metric_price)}
+    return result
 
 
 def run_sensitivity(workload, gpu, storage, time_data, energy, latency_map, args):
@@ -472,13 +605,34 @@ def run_sensitivity(workload, gpu, storage, time_data, energy, latency_map, args
     for value in sorted(set(args.capacity_factors)):
         specs.append(("capacity", value, workload, gpu, storage, time_data, energy, latency_map, args))
     specs.append(("renewable_minus_20_percent", 0.8, workload, gpu, storage, time_data, energy, latency_map, args))
-    max_workers = max(1, min(int(args.workers), len(specs)))
+    total = len(specs)
+    max_workers = min(8, max(1, int(args.workers)), total)
+    print(f"敏感性分析: 0/{total} 个场景完成", flush=True)
     if max_workers == 1:
-        rows = [_run_sensitivity_job(spec) for spec in specs]
+        rows = []
+        for index, spec in enumerate(specs, 1):
+            result = _run_sensitivity_job(spec)
+            rows.append(result)
+            print(
+                f"敏感性分析: {index}/{total} 完成 "
+                f"({_scenario_label(spec[0], spec[1])})",
+                flush=True,
+            )
     else:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(_run_sensitivity_job, spec) for spec in specs]
-            rows = [future.result() for future in futures]
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            future_to_spec = {
+                executor.submit(_run_sensitivity_job, spec): spec
+                for spec in specs
+            }
+            rows = []
+            for index, future in enumerate(as_completed(future_to_spec), 1):
+                spec = future_to_spec[future]
+                rows.append(future.result())
+                print(
+                    f"敏感性分析: {index}/{total} 完成 "
+                    f"({_scenario_label(spec[0], spec[1])})",
+                    flush=True,
+                )
     return pd.DataFrame(rows)
 
 
@@ -538,23 +692,37 @@ def main():
     out=args.output_dir; (out/"schedule").mkdir(exist_ok=True); (out/"energy").mkdir(exist_ok=True); (out/"reports").mkdir(exist_ok=True)
     # A0：纯本地、到达即执行；A1：空间迁移；A2：空间+时间；A3：固定 A2 后储能；A4：完整反馈。
     # A0/A1/A2 的容量状态互相独立，使用多进程同时执行，结果与原串行算法完全一致。
+    print(
+        f"并行配置：CPU={CPU_COUNT}，worker={args.workers}，"
+        "敏感性场景最多8进程；每场景内部区域LP串行",
+        flush=True,
+    )
+    print("阶段 1/5：并行计算 A0/A1/A2 调度方案……", flush=True)
     independent = run_independent_schedules(workload, gpu, energy, latency_map, args)
+    print("阶段 1/5 完成：A0/A1/A2 调度完成", flush=True)
     a0, _ug, _ui = independent["A0"]
     a1, _ug, _ui = independent["A1"]
     a2, _ug, _ui = independent["A2"]
+    print("阶段 2/5：计算 A3 固定调度的区域能源 LP……", flush=True)
     a3_results,a3_energy=solve_energy(a2,energy,gpu,storage,args.carbon_price,args.renewable_alpha,args.workers)
+    print("阶段 2/5 完成：A3 能源 LP 完成", flush=True)
+    print("阶段 3/5：运行 A4 反馈迭代……", flush=True)
     a4,a4_energy,a4_results,convergence=feedback_schedule(workload,gpu,energy,latency_map,args)
+    print("阶段 3/5 完成：A4 反馈迭代完成", flush=True)
     frames={"A0":no_storage_frame(a0,energy,gpu,REGIONS,args.renewable_alpha),"A1":no_storage_frame(a1,energy,gpu,REGIONS,args.renewable_alpha),"A2":no_storage_frame(a2,energy,gpu,REGIONS,args.renewable_alpha),"A3":a3_energy,"A4":a4_energy}
     schedules={"A0":a0,"A1":a1,"A2":a2,"A3":a2,"A4":a4}
     ablation=pd.DataFrame([metrics(k,schedules[k],frames[k],args.carbon_price) for k in ["A0","A1","A2","A3","A4"]])
+    print("阶段 4/5：执行约束验证并写入主结果……", flush=True)
     verification=verify(a4,a4_energy,workload,gpu,storage,latency_map)
     if (verification.ViolationCount>0).any(): raise AssertionError("问题四约束验证失败")
     a4.to_csv(out/"schedule"/"schedule_A4.csv",index=False,encoding="utf-8-sig"); a4_energy.to_csv(out/"energy"/"energy_A4.csv",index=False,encoding="utf-8-sig"); a3_energy.to_csv(out/"energy"/"energy_A3.csv",index=False,encoding="utf-8-sig")
     verification.to_csv(out/"reports"/"constraint_verification.csv",index=False,encoding="utf-8-sig"); ablation.to_csv(out/"reports"/"ablation_A0_A4.csv",index=False,encoding="utf-8-sig"); convergence.to_csv(out/"reports"/"convergence.csv",index=False,encoding="utf-8-sig")
     sens=[]
     if not args.skip_sensitivity:
+        print("阶段 5/5：开始敏感性分析……", flush=True)
         scenario_frame = run_sensitivity(workload, gpu, storage, time_data, energy, latency_map, args)
         scenario_frame.to_csv(out/"reports"/"scenario_sensitivity.csv",index=False,encoding="utf-8-sig")
+        print("阶段 5/5 完成：敏感性分析结果已写入", flush=True)
     else:
         scenario_frame = pd.DataFrame()
     if not args.skip_plots: make_plots(out,a4,a4_energy,convergence,ablation,scenario_frame if not scenario_frame.empty else pd.DataFrame({"Scenario":[],"Parameter":[],"Objective_CNY":[]}))
@@ -563,4 +731,6 @@ def main():
     print(f"完成。结果目录：{out.resolve()}",flush=True)
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    if not _relaunch_from_local_copy():
+        main()
