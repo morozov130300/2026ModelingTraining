@@ -164,7 +164,17 @@ def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, ba
     tasks["LatestStart"] = np.floor(tasks["LatestFinishHour"] - tasks["Duration_h"] + EPS).astype(int)
     tasks["Urgency"] = tasks["LatestStart"] - tasks["ArrivalHour"]
     tasks["Priority"] = np.where(tasks["TaskType"].eq("RealTimeInference"), 0, np.where(tasks["TaskType"].eq("AITraining"), 1, 2))
-    tasks = tasks.sort_values(["ArrivalHour", "Priority", "Urgency", "GPU_Demand"], ascending=[True, True, True, False])
+    tasks["DispatchHour"] = np.where(
+        tasks["TaskType"].eq("RealTimeInference"),
+        tasks["ArrivalHour"],
+        tasks["LatestStart"],
+    )
+    # 弹性任务按截止紧迫度先排，避免早到的大任务贪心占满容量后堵死后续紧任务；
+    # 实时任务仍按到达时刻排，保证到达即执行的优先级不被改变。
+    tasks = tasks.sort_values(
+        ["DispatchHour", "Priority", "ArrivalHour", "GPU_Demand"],
+        ascending=[True, True, True, False],
+    )
     cap_gpu = gpu["Available_GPU"].to_dict()
     max_it = gpu["Max_IT_Power_MW"].to_dict()
     pue = gpu["PUE"].to_dict()
