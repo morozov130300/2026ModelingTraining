@@ -128,7 +128,7 @@ def draw_gantt(ax, schedule: pd.DataFrame) -> None:
               frameon=False, fontsize=9, borderaxespad=0.0)
 
 
-def draw_utilization(ax, usage: pd.DataFrame, baseline: pd.DataFrame | None) -> None:
+def draw_utilization(ax, usage: pd.DataFrame, baseline: Optional[pd.DataFrame]) -> None:
     part = usage[usage["Hour"].between(START_HOUR, END_HOUR - 1)].copy()
     for color, region in zip(REGION_COLORS, REGIONS):
         group = part[part["Region"].eq(region)].sort_values("Hour")
@@ -160,45 +160,62 @@ def draw_forecast(ax, predictions: pd.DataFrame) -> None:
     hours = group.index.to_numpy()
     actual = group["Actual_GPU_h"].to_numpy()
     predicted = group["Predicted_GPU_h"].to_numpy()
-    ax.plot(hours, actual, color="#111827", linewidth=2.5, marker="o", markersize=3.8, label="实际值")
-    ax.plot(hours, predicted, color="#2563EB", linewidth=2.2, marker="s", markersize=3.2,
-            linestyle="--", label="GBDT 预测")
-    ax.fill_between(hours, actual, predicted, color="#93C5FD", alpha=0.20, label="偏差带")
+    actual_smooth = group["Actual_GPU_h"].rolling(window=3, center=True, min_periods=1).mean().to_numpy()
+    predicted_smooth = group["Predicted_GPU_h"].rolling(window=3, center=True, min_periods=1).mean().to_numpy()
+
+    ax.plot(hours, actual, color="#94A3B8", linewidth=0.9, alpha=0.38, label="实际值（逐时）")
+    ax.plot(hours, predicted, color="#93C5FD", linewidth=0.9, alpha=0.42,
+            linestyle="--", label="预测值（逐时）")
+    ax.plot(hours, actual_smooth, color="#111827", linewidth=2.5, marker="o", markersize=3.4,
+            label="实际趋势（3小时均值）")
+    ax.plot(hours, predicted_smooth, color="#2563EB", linewidth=2.3, marker="s", markersize=3.0,
+            linestyle="--", label="预测趋势（3小时均值）")
     ax.axvline(START_HOUR, color="#1D4ED8", linestyle="--", linewidth=1.1)
     ax.axvline(END_HOUR, color="#1D4ED8", linestyle="--", linewidth=1.1)
     ax.set_xlim(START_HOUR, END_HOUR)
     ax.set_ylabel("GPU-hour", fontsize=10)
     ax.set_xlabel("小时（Hour）", fontsize=10)
-    ax.set_title("2376–2399 预测 vs 实际 · 过程偏差形态", loc="left", fontsize=13, pad=10)
+    ax.set_title("2376–2399 预测 vs 实际 · 逐时数据与 3 小时趋势", loc="left", fontsize=13, pad=10)
     ax.set_xticks(np.arange(START_HOUR, END_HOUR + 1, 4))
-    ax.legend(loc="upper right", frameon=False, ncol=3, fontsize=8)
+    ax.legend(loc="upper right", frameon=False, ncol=2, fontsize=8)
     style_axis(ax)
+
+
+def save_single_plot(drawer, output: Path, figsize: Tuple[float, float], *args) -> None:
+    fig, ax = plt.subplots(figsize=figsize, dpi=160)
+    drawer(ax, *args)
+    fig.tight_layout()
+    fig.savefig(output, dpi=260, bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close(fig)
 
 
 def main() -> None:
     args = parse_args()
     configure_fonts()
     schedule, usage, predictions, baseline = load_inputs(args.output_dir, args.data_dir)
-
-    fig = plt.figure(figsize=(16, 13), dpi=150)
-    grid = fig.add_gridspec(3, 1, height_ratios=[1.18, 1.02, 1.0], hspace=0.34)
-    ax_gantt = fig.add_subplot(grid[0])
-    ax_util = fig.add_subplot(grid[1], sharex=ax_gantt)
-    ax_forecast = fig.add_subplot(grid[2], sharex=ax_gantt)
-
-    draw_gantt(ax_gantt, schedule)
-    draw_utilization(ax_util, usage, baseline)
-    draw_forecast(ax_forecast, predictions)
-
-    fig.suptitle("问题一：末 24 小时调度结构与预测过程诊断", fontsize=20, fontweight="bold", y=0.985, color="#0F172A")
-    fig.text(0.5, 0.958, "甘特图展示任务排布，曲线呈现区域负载形状，预测图揭示窗口内的逐时偏差",
-             ha="center", fontsize=10, color="#64748B")
     output_dir = args.output_dir / "plots"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output = output_dir / args.output_name
-    fig.savefig(output, dpi=260, bbox_inches="tight", facecolor=fig.get_facecolor())
-    plt.close(fig)
-    print(f"综合可视化已生成：{output.resolve()}")
+
+    save_single_plot(
+        draw_gantt,
+        output_dir / "gantt_2376_2400.png",
+        (16, 7.2),
+        schedule,
+    )
+    save_single_plot(
+        draw_utilization,
+        output_dir / "gpu_utilization_2376_2399.png",
+        (16, 6.2),
+        usage,
+        baseline,
+    )
+    save_single_plot(
+        draw_forecast,
+        output_dir / "forecast_vs_actual_2376_2399.png",
+        (16, 6.2),
+        predictions,
+    )
+    print(f"三张独立图已生成：{output_dir.resolve()}")
 
 
 if __name__ == "__main__":

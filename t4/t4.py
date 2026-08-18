@@ -12,16 +12,20 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import json
 import math
 import os
 import warnings
 from pathlib import Path
 
-# 每个 HiGHS LP 使用单线程，把并发度交给外层区域/场景线程，避免线程过度订阅。
-for _thread_env in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
-    os.environ.setdefault(_thread_env, "1")
+CPU_COUNT = max(1, os.cpu_count() or 1)
+LP_THREADS = max(1, math.ceil(CPU_COUNT / 6))
+# 固定使用本机全部逻辑 CPU：最多 6 个区域 LP 同时运行，
+# 每个 HiGHS/BLAS 子问题分配 CPU_COUNT/6 个线程。
+for _thread_env in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                    "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ[_thread_env] = str(LP_THREADS)
 
 import numpy as np
 import pandas as pd
@@ -48,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--window-hours", type=int, default=48, help="外层滚动候选窗口")
     p.add_argument("--batch-size", type=int, default=2000, help="滚动调度的任务批规模")
     p.add_argument("--max-iterations", type=int, default=3)
-    p.add_argument("--workers", type=int, default=8, help="并行工作线程数；默认使用 8 个线程，用于区域 LP 与敏感性场景")
+    p.add_argument("--workers", type=int, default=max(1, os.cpu_count() or 1), help="并行工作线程数；默认锁定为本机全部逻辑 CPU")
     p.add_argument("--convergence-tol", type=float, default=1e-3)
     p.add_argument("--renewable-alpha", type=float, default=1.0)
     p.add_argument("--renewable-scale", type=float, default=1.0)
@@ -164,16 +168,12 @@ def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, ba
     tasks["LatestStart"] = np.floor(tasks["LatestFinishHour"] - tasks["Duration_h"] + EPS).astype(int)
     tasks["Urgency"] = tasks["LatestStart"] - tasks["ArrivalHour"]
     tasks["Priority"] = np.where(tasks["TaskType"].eq("RealTimeInference"), 0, np.where(tasks["TaskType"].eq("AITraining"), 1, 2))
-    tasks["DispatchHour"] = np.where(
-        tasks["TaskType"].eq("RealTimeInference"),
-        tasks["ArrivalHour"],
-        tasks["LatestStart"],
-    )
-    # 弹性任务按截止紧迫度先排，避免早到的大任务贪心占满容量后堵死后续紧任务；
-    # 实时任务仍按到达时刻排，保证到达即执行的优先级不被改变。
+    tasks["TaskGroup"] = np.where(tasks["TaskType"].eq("RealTimeInference"), 0, 1)
+    # 先完成全部实时任务，再按弹性任务截止紧迫度处理；这样弹性任务不会
+    # 先占用本地容量，导致后续实时任务无法按题目要求到达即执行。
     tasks = tasks.sort_values(
-        ["DispatchHour", "Priority", "ArrivalHour", "GPU_Demand"],
-        ascending=[True, True, True, False],
+        ["TaskGroup", "ArrivalHour", "LatestStart", "Priority", "GPU_Demand"],
+        ascending=[True, True, True, True, False],
     )
     cap_gpu = gpu["Available_GPU"].to_dict()
     max_it = gpu["Max_IT_Power_MW"].to_dict()
@@ -201,32 +201,64 @@ def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, ba
             starts = list(range(int(row.ArrivalHour), end + 1))
             if latest > end: starts.append(latest)
         def feasible_starts(start_values):
+            starts_array = np.asarray(start_values, dtype=np.int64)
+            if starts_array.size == 0:
+                return None
+            span = max(1, int(math.ceil(duration - EPS)))
+            offsets = np.arange(span, dtype=np.int64)
+            hours_matrix = starts_array[:, None] + offsets[None, :]
+            overlap_template = np.maximum(
+                0.0,
+                np.minimum(offsets.astype(float) + 1.0, duration) - offsets.astype(float),
+            )
+            gpu_add = demand * overlap_template
+            it_add = demand * rate * overlap_template
             best_choice = None
             for r in candidates:
                 rj = ri[r]
-                for start in start_values:
-                    hours, overlap = overlap_arrays(start, duration)
-                    if len(hours) == 0 or hours[-1] > LAST_EXEC_HOUR: continue
-                    add_gpu = demand * overlap
-                    add_it = demand * rate * overlap
-                    if np.any(used_gpu[rj, hours] + add_gpu > float(cap_gpu[r]) + EPS): continue
-                    if np.any(used_it[rj, hours] + add_it > (float(max_it[r]) - energy[r]["nonai"][hours]) + EPS): continue
-                    score = float(np.sum(signals[r][hours] * demand * rate * pue[r] * overlap))
-                    migration_penalty = 0.02 * float(latency_map.get((source, r), 0.0)) * demand * duration
-                    wait_penalty = 0.0001 * max(0, start - int(row.ArrivalHour)) * demand * duration
-                    if mode == "local": score = 0.0 if r == source else 1e15
-                    if mode == "arrival": score += wait_penalty * 10000
-                    score += migration_penalty + wait_penalty
-                    key = (score, start, r != source, r)
-                    if best_choice is None or key < best_choice[0]:
-                        best_choice = (key, r, start, hours, overlap)
+                current_gpu = used_gpu[rj, hours_matrix]
+                current_it = used_it[rj, hours_matrix]
+                feasible = np.all(
+                    current_gpu + gpu_add[None, :] <= float(cap_gpu[r]) + EPS,
+                    axis=1,
+                )
+                feasible &= np.all(
+                    current_it + it_add[None, :]
+                    <= (float(max_it[r]) - energy[r]["nonai"][hours_matrix]) + EPS,
+                    axis=1,
+                )
+                if not np.any(feasible):
+                    continue
+                scores = np.sum(
+                    signals[r][hours_matrix]
+                    * demand * rate * pue[r]
+                    * overlap_template[None, :],
+                    axis=1,
+                )
+                wait = np.maximum(0, starts_array - int(row.ArrivalHour))
+                wait_penalty = 0.0001 * wait * demand * duration
+                if mode == "local":
+                    scores[:] = 0.0 if r == source else 1e15
+                if mode == "arrival":
+                    scores += wait_penalty * 10000
+                scores += (
+                    0.02 * float(latency_map.get((source, r), 0.0)) * demand * duration
+                    + wait_penalty
+                )
+                scores = np.where(feasible, scores, np.inf)
+                index = int(np.argmin(scores))
+                start = int(starts_array[index])
+                hours, overlap = overlap_arrays(start, duration)
+                key = (float(scores[index]), start, r != source, r)
+                if best_choice is None or key < best_choice[0]:
+                    best_choice = (key, r, start, hours, overlap)
             return best_choice
 
         best = feasible_starts(starts)
         if best is None and mode == "arrival" and row.TaskType != "RealTimeInference":
-            end = min(latest, int(row.ArrivalHour) + max(1, window_hours) - 1)
-            fallback_starts = list(range(int(row.ArrivalHour), end + 1))
-            if latest > end: fallback_starts.append(latest)
+            # 不再受滚动窗口限制：A1 的回退只为消除到达小时拥塞，
+            # 必须检查该弹性任务完整的到达--截止可行区间。
+            fallback_starts = list(range(int(row.ArrivalHour), latest + 1))
             best = feasible_starts(fallback_starts)
         if best is None:
             failed.append({"TaskID": row.TaskID, "Reason": "capacity infeasible"}); continue
@@ -244,6 +276,41 @@ def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, ba
         raise RuntimeError(f"外层调度有 {len(failed)} 个任务失败；首个任务 {failed[0]}")
     schedule = pd.DataFrame(records).sort_values("TaskID").reset_index(drop=True)
     return schedule, used_gpu, used_it
+
+
+def _schedule_case_job(args):
+    label, workload, gpu, energy, latency_map, signals, window_hours, batch_size, mode = args
+    return label, schedule_tasks(workload, gpu, energy, latency_map, signals,
+                                 window_hours, batch_size, mode=mode)
+
+
+def run_independent_schedules(workload, gpu, energy, latency_map, args):
+    base_signal = {r: np.zeros(HORIZON) for r in REGIONS}
+    arrival_signal = {
+        r: np.repeat(
+            float(np.mean(energy[r]["price"] + args.carbon_price * energy[r]["carbon"]))
+            * float(gpu.loc[r, "PUE"]),
+            HORIZON,
+        )
+        for r in REGIONS
+    }
+    joint_signal = initial_signal(energy, args.carbon_price)
+    jobs = [
+        ("A0", workload, gpu, energy, latency_map, base_signal,
+         args.window_hours, args.batch_size, "local"),
+        ("A1", workload, gpu, energy, latency_map, arrival_signal,
+         args.window_hours, args.batch_size, "arrival"),
+        ("A2", workload, gpu, energy, latency_map, joint_signal,
+         args.window_hours, args.batch_size, "joint"),
+    ]
+    max_workers = min(max(1, int(args.workers)), len(jobs))
+    if max_workers == 1:
+        solved = [_schedule_case_job(job) for job in jobs]
+    else:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_schedule_case_job, job) for job in jobs]
+            solved = [future.result() for future in as_completed(futures)]
+    return dict(solved)
 
 
 def variable_slice(name):
@@ -283,10 +350,14 @@ def solve_region_lp(region, loads, ctx, carbon_price):
     aeq = lil_matrix((3*n, size)); beq = np.zeros(3*n)
     cr,cg,d,q,y,u,w,s = [variable_slice(x) for x in LP_VARIABLES]
     for t in range(n):
-        aeq[t,q.start+t]=1; aeq[t,d.start+t]=1; aeq[t,u.start+t]=1; aeq[t,cr.start+t]=-1; aeq[t,cg.start+t]=-1; aeq[t,y.start+t]=-1; aeq[t,w.start+t]=-1; beq[t]=total[t]
+        # q + R + d = TL + cR + cG + y + w；直接消纳 u 由下一条新能源守恒隐含。
+        aeq[t,q.start+t]=1; aeq[t,d.start+t]=1; aeq[t,cr.start+t]=-1; aeq[t,cg.start+t]=-1; aeq[t,y.start+t]=-1; aeq[t,w.start+t]=-1; beq[t]=total[t]-ctx["renewable"][t]
         aeq[n+t,u.start+t]=1; aeq[n+t,cr.start+t]=1; aeq[n+t,y.start+t]=1; aeq[n+t,w.start+t]=1; beq[n+t]=ctx["renewable"][t]
-        aeq[2*n+t,s.start+t]=1; aeq[2*n+t,cr.start+t]=-float(p["ChargeEfficiency"]); aeq[2*n+t,cg.start+t]=-float(p["ChargeEfficiency"]); aeq[2*n+t,d.start+t]=1/float(p["DischargeEfficiency"]); beq[2*n+t]=float(p["InitialSOC_MWh"])
-        if t: aeq[2*n+t,s.start+t-1]=-1
+        aeq[2*n+t,s.start+t]=1; aeq[2*n+t,cr.start+t]=-float(p["ChargeEfficiency"]); aeq[2*n+t,cg.start+t]=-float(p["ChargeEfficiency"]); aeq[2*n+t,d.start+t]=1/float(p["DischargeEfficiency"])
+        if t:
+            aeq[2*n+t,s.start+t-1]=-1
+        else:
+            beq[2*n+t]=float(p["InitialSOC_MWh"])
     aub = lil_matrix((6*n+1, size)); bub = np.zeros(6*n+1); k=0
     for t in range(n):
         for coeff, rhs in [
@@ -466,11 +537,11 @@ def main():
     energy=prepare_energy_arrays(time_data,storage,REGIONS,args.renewable_alpha)
     out=args.output_dir; (out/"schedule").mkdir(exist_ok=True); (out/"energy").mkdir(exist_ok=True); (out/"reports").mkdir(exist_ok=True)
     # A0：纯本地、到达即执行；A1：空间迁移；A2：空间+时间；A3：固定 A2 后储能；A4：完整反馈。
-    base_signal={r:np.zeros(HORIZON) for r in REGIONS}
-    a0,_ug,_ui=schedule_tasks(workload,gpu,energy,latency_map,base_signal,args.window_hours,args.batch_size,mode="local")
-    a1_signal={r:np.repeat(float(np.mean(energy[r]["price"]+args.carbon_price*energy[r]["carbon"]))*float(gpu.loc[r,"PUE"]),HORIZON) for r in REGIONS}
-    a1,_ug,_ui=schedule_tasks(workload,gpu,energy,latency_map,a1_signal,args.window_hours,args.batch_size,mode="arrival")
-    a2,_ug,_ui=schedule_tasks(workload,gpu,energy,latency_map,initial_signal(energy,args.carbon_price),args.window_hours,args.batch_size,mode="joint")
+    # A0/A1/A2 的容量状态互相独立，使用多进程同时执行，结果与原串行算法完全一致。
+    independent = run_independent_schedules(workload, gpu, energy, latency_map, args)
+    a0, _ug, _ui = independent["A0"]
+    a1, _ug, _ui = independent["A1"]
+    a2, _ug, _ui = independent["A2"]
     a3_results,a3_energy=solve_energy(a2,energy,gpu,storage,args.carbon_price,args.renewable_alpha,args.workers)
     a4,a4_energy,a4_results,convergence=feedback_schedule(workload,gpu,energy,latency_map,args)
     frames={"A0":no_storage_frame(a0,energy,gpu,REGIONS,args.renewable_alpha),"A1":no_storage_frame(a1,energy,gpu,REGIONS,args.renewable_alpha),"A2":no_storage_frame(a2,energy,gpu,REGIONS,args.renewable_alpha),"A3":a3_energy,"A4":a4_energy}

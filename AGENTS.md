@@ -57,7 +57,7 @@ python t1/make_charts.py
 python t4/t4.py --data-dir 题目 --output-dir t4/output --workers 6 --skip-plots
 ```
 
-`--workers 8` 同时并行区域 LP 或敏感性场景；默认值固定为 8，适配当前 8 核 CPU。只有显式传入 `--workers N` 时才覆盖默认并发数。
+`--workers` 默认锁定为本机全部逻辑 CPU；区域 LP 最多同时运行六个区域任务，敏感性场景使用全部可用 worker。也可显式传入 `--workers N` 限制并发度。
 
 问题四所需依赖还包括：`scipy`。当前没有测试套件；任何 Python 语法检查、聚焦测试和完整运行均由用户在其他环境中执行。
 
