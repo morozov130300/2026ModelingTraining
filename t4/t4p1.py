@@ -80,9 +80,17 @@ def require_columns(name: str, frame, columns: list[str]) -> None:
         raise ValueError(f"{name} 缺少字段: {missing}")
 
 
-def apply_tick_font(axis, font_properties) -> None:
-    for label in axis.get_xticklabels() + axis.get_yticklabels():
-        label.set_fontproperties(font_properties)
+def apply_axis_fonts(axis, x_font, y_font) -> None:
+    for label in axis.get_xticklabels():
+        label.set_fontproperties(x_font)
+    for label in axis.get_yticklabels():
+        label.set_fontproperties(y_font)
+    x_offset = axis.xaxis.get_offset_text()
+    y_offset = axis.yaxis.get_offset_text()
+    if x_offset is not None:
+        x_offset.set_fontproperties(x_font)
+    if y_offset is not None:
+        y_offset.set_fontproperties(y_font)
 
 
 def load_inputs(output_dir: Path):
@@ -121,7 +129,7 @@ def format_million(value: float, digits: int = 2) -> str:
     return f"{value / 1_000_000:.{digits}f}M"
 
 
-def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font) -> None:
+def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font, en_font) -> None:
     from matplotlib.patches import Patch
 
     order = ["A0", "A1", "A2", "A3", "A4"]
@@ -136,7 +144,7 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font) -> None:
         "A3→A4\n反馈",
     ]
 
-    fig, ax = plt.subplots(figsize=(13.5, 7.2), facecolor="#FFFFFF")
+    fig, ax = plt.subplots(figsize=(13.8, 8.2), facecolor="#FFFFFF")
     ax.set_facecolor("#FFFFFF")
 
     x_values = list(range(len(order)))
@@ -149,8 +157,8 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font) -> None:
     for scenario in order[1:]:
         delta_million = float(improvements.loc[scenario]) / 1_000_000
         if abs(delta_million) < 0.005:
-            bar_bottoms.append(running - 0.05)
-            bar_heights.append(0.10)
+            bar_bottoms.append(running - 0.06)
+            bar_heights.append(0.12)
             colors.append("#8A949E")
         else:
             bar_bottoms.append(running)
@@ -162,7 +170,7 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font) -> None:
         x_values,
         bar_heights,
         bottom=bar_bottoms,
-        width=0.58,
+        width=0.56,
         color=colors,
         edgecolor="#1F2933",
         linewidth=1.0,
@@ -172,7 +180,7 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font) -> None:
     cumulative = [-float(value) / 1_000_000 for value in objective]
     for left, right, level in zip(x_values[:-1], x_values[1:], cumulative[:-1]):
         ax.plot(
-            [left + 0.29, right - 0.29],
+            [left + 0.28, right - 0.28],
             [level, level],
             color="#4A5568",
             linewidth=1.1,
@@ -185,19 +193,21 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font) -> None:
         if index == 0:
             label = format_million(-float(objective.loc[scenario]))
             y = bar.get_height() + 2.0
+            font_prop = en_font
         else:
             delta = float(improvements.loc[scenario])
             label = "0" if abs(delta) < 1 else f"+{format_million(delta)}"
-            y = bar.get_y() + max(bar.get_height(), 0.10) + 1.6
+            y = bar.get_y() + bar.get_height() + 1.5
+            font_prop = en_font if index > 0 else zh_font
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             y,
             label,
             ha="center",
             va="bottom",
-            fontsize=14,
+            fontsize=12.5,
             fontweight="bold",
-            fontproperties=zh_font,
+            fontproperties=font_prop,
             color="#000000",
         )
 
@@ -205,7 +215,7 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font) -> None:
     ax.annotate(
         "储能是主导收益",
         xy=(storage_index, cumulative[storage_index]),
-        xytext=(storage_index + 0.55, cumulative[storage_index] + 16),
+        xytext=(storage_index + 0.86, cumulative[storage_index] + 13),
         arrowprops={"arrowstyle": "->", "color": "#0B7A53", "linewidth": 1.6},
         fontsize=15,
         fontweight="bold",
@@ -215,9 +225,9 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font) -> None:
     ax.annotate(
         "A4 零增量：采用 incumbent，反馈无额外收益",
         xy=(4, cumulative[4]),
-        xytext=(2.42, cumulative[4] - 18),
+        xytext=(2.75, cumulative[4] - 20),
         arrowprops={"arrowstyle": "->", "color": "#5F6B7A", "linewidth": 1.5},
-        fontsize=13,
+        fontsize=12.5,
         fontproperties=zh_font,
         color="#000000",
     )
@@ -231,11 +241,12 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font) -> None:
         fontsize=18,
         fontweight="bold",
         color="#000000",
-        pad=18,
+        pad=24,
     )
+    ax.set_ylim(-5, max(cumulative) + 26)
     ax.grid(axis="y", color="#D9E2EC", linewidth=0.8, alpha=0.85, zorder=0)
     ax.spines[["top", "right"]].set_visible(False)
-    apply_tick_font(ax, zh_font)
+    apply_axis_fonts(ax, zh_font, en_font)
     ax.legend(
         handles=[
             Patch(facecolor="#5B8DEF", edgecolor="#1F2933", label="A0 基准绝对水平"),
@@ -243,17 +254,19 @@ def make_ablation_waterfall(ablation, plot_dir: Path, plt, zh_font) -> None:
             Patch(facecolor="#1FA971", edgecolor="#1F2933", label="储能主导改善"),
             Patch(facecolor="#8A949E", edgecolor="#1F2933", label="零增量"),
         ],
-        loc="upper left",
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.08),
+        ncol=2,
         frameon=False,
         prop=zh_font,
-        fontsize=12,
+        fontsize=11.5,
     )
-    fig.tight_layout()
+    fig.subplots_adjust(bottom=0.19, top=0.90)
     fig.savefig(plot_dir / "ablation_waterfall_A0_A4.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
     plt.close(fig)
 
 
-def make_feedback_incumbent(convergence, plot_dir: Path, plt, zh_font) -> None:
+def make_feedback_incumbent(convergence, plot_dir: Path, plt, zh_font, en_font) -> None:
     data = convergence.sort_values("Iteration").copy()
     data["Objective_Million"] = data["Objective_CNY"].astype(float) / 1_000_000
     data["BestObjective_Million"] = data["BestObjective_CNY"].astype(float) / 1_000_000
@@ -317,14 +330,14 @@ def make_feedback_incumbent(convergence, plot_dir: Path, plt, zh_font) -> None:
     )
     ax.grid(color="#D9E2EC", linewidth=0.8, alpha=0.85)
     ax.spines[["top", "right"]].set_visible(False)
-    apply_tick_font(ax, zh_font)
+    apply_axis_fonts(ax, zh_font, en_font)
     ax.legend(loc="best", frameon=False, prop=zh_font, fontsize=12)
     fig.tight_layout()
     fig.savefig(plot_dir / "feedback_incumbent_convergence.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
     plt.close(fig)
 
 
-def make_alpha_pressure(sensitivity, plot_dir: Path, plt, zh_font) -> None:
+def make_alpha_pressure(sensitivity, plot_dir: Path, plt, zh_font, en_font) -> None:
     alpha = sensitivity.loc[sensitivity["Scenario"].eq("alpha")].copy()
     alpha = alpha.sort_values("Parameter")
     required_alpha = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
@@ -481,9 +494,9 @@ def make_alpha_pressure(sensitivity, plot_dir: Path, plt, zh_font) -> None:
         color="#000000",
         pad=14,
     )
-    apply_tick_font(top_ax, zh_font)
-    apply_tick_font(objective_ax, zh_font)
-    apply_tick_font(bottom_ax, zh_font)
+    apply_axis_fonts(top_ax, zh_font, en_font)
+    apply_axis_fonts(objective_ax, zh_font, en_font)
+    apply_axis_fonts(bottom_ax, zh_font, en_font)
 
     fig.tight_layout()
     fig.savefig(plot_dir / "alpha_pressure_transmission.png", dpi=220, bbox_inches="tight", facecolor="#FFFFFF")
@@ -497,14 +510,14 @@ def main() -> None:
     import matplotlib.pyplot as plt
 
     args = parse_args()
-    zh_font, _en_font = configure_fonts(matplotlib)
+    zh_font, en_font = configure_fonts(matplotlib)
     ablation, convergence, sensitivity = load_inputs(args.output_dir)
     plot_dir = args.output_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
 
-    make_ablation_waterfall(ablation, plot_dir, plt, zh_font)
-    make_feedback_incumbent(convergence, plot_dir, plt, zh_font)
-    make_alpha_pressure(sensitivity, plot_dir, plt, zh_font)
+    make_ablation_waterfall(ablation, plot_dir, plt, zh_font, en_font)
+    make_feedback_incumbent(convergence, plot_dir, plt, zh_font, en_font)
+    make_alpha_pressure(sensitivity, plot_dir, plt, zh_font, en_font)
 
     print(f"已生成问题四论文图表：{plot_dir}")
 
