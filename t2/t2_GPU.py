@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-"""问题二 GPU 加速版。
-
-使用 CuPy 将候选开工时刻的容量筛选和边际能源目标计算放到 CUDA GPU；
-调度顺序仍保持 EDF，容量状态仍按任务顺序累计，因此结果口径与 t2.py 一致。
-若未安装 CuPy，会明确提示并回退到 CPU 版 t2.py。
-
-安装示例：
-    python -m pip install cupy-cuda12x
-运行示例：
-    python t2/t2_GPU.py --workers 1 --skip-plots
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -38,7 +25,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-values", type=float, nargs="*", default=[0, 50, 100, 150, 200, 300, 500])
     parser.add_argument("--q1-schedule", type=Path, default=here.parent / "t1" / "output" / "schedule" / "schedule.csv")
     parser.add_argument("--skip-sensitivity", action="store_true")
-    parser.add_argument("--skip-plots", action="store_true")
     parser.add_argument("--gpu-device", type=int, default=0, help="CUDA 设备编号")
     parser.add_argument("--gpu-memory-pool-limit", type=int, default=0,
                         help="GPU 内存池上限（字节），0 表示不限制")
@@ -54,7 +40,6 @@ def gpu_objective(load, renewable, price, carbon, sell_price, export_limit, carb
 
 def gpu_choose_placement(row, candidates, ctx_gpu, used_gpu, used_it, power_rate,
                          carbon_price, preferred):
-    """批量评估一个任务在一个区域所有候选整数开工时刻。"""
     duration = float(row.Duration_h)
     demand = float(row.GPU_Demand)
     latest = min(int(row.LatestStart), int(math.floor(2406.0 - duration + base.EPS)))
@@ -202,8 +187,6 @@ def main():
                 rows.append(base.schedule_metrics(f"lambda={value:g}", candidate, base.energy_balance(ctx, candidate_it)[1], value))
             pd.DataFrame(rows[2:]).to_csv(report_dir / "lambda_sensitivity.csv", index=False, encoding="utf-8-sig")
         pd.DataFrame(rows).to_csv(report_dir / "scenario_comparison.csv", index=False, encoding="utf-8-sig")
-        if not args.skip_plots:
-            base.make_plots(out, pd.DataFrame(rows), scheme_b, b_usage, ctx)
         (out / "summary.json").write_text(pd.Series({"backend": "cupy", "gpu": name, "task_count": len(workload), "scheme_a_scheduled_tasks": len(scheme_a), "scheme_b_scheduled_tasks": len(scheme_b), "all_constraints_passed": True}).to_json(force_ascii=False, indent=2), encoding="utf-8")
         cp.cuda.Stream.null.synchronize()
         print(f"GPU 调度完成。结果目录：{out.resolve()}", flush=True)

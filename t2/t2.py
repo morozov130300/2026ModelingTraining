@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""问题二：可再生优先的碳感知 AI 工作负载调度。
-
-依据 t2_plan.md 实现：实时任务固定本地；弹性任务先作区域粗指派，
-再在可达区域和整数开工时刻中以 C + lambda * E 的边际增量选优。
-所有容量和能量计算均采用分钟级小时重叠量，2406 仅用于结算而不执行任务。
-
-运行：
-    python t2/t2.py --data-dir 题目 --output-dir t2/output --carbon-price 200
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -43,7 +32,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-sensitivity", action="store_true", help="仅运行主碳价，跳过额外 lambda 调度")
     parser.add_argument("--workers", type=int, default=8,
                         help="并行运行独立方案/灵敏度任务的进程数；1 为串行，建议不超过物理核心数")
-    parser.add_argument("--skip-plots", action="store_true", help="跳过 PNG 制图")
     return parser.parse_args()
 
 
@@ -140,7 +128,6 @@ def build_context(gpu: pd.DataFrame, energy: pd.DataFrame, regions: list[str]) -
 def facility_objective(load: np.ndarray, renewable: np.ndarray, price: np.ndarray,
                        carbon: np.ndarray, sell_price: np.ndarray, export_limit: float,
                        carbon_price: float) -> np.ndarray:
-    """单小时设施负荷的 C + lambda E，含可再生优先、外送与弃电解析最优。"""
     purchase = np.maximum(0.0, load - renewable)
     surplus = np.maximum(0.0, renewable - load)
     sell = np.minimum(export_limit, surplus)
@@ -187,7 +174,6 @@ def allowed_regions(row, ctx: dict, latency_map: dict, local_only: bool = False)
 
 def stage_one_assign(workload: pd.DataFrame, ctx: dict, power_map: dict, latency_map: dict,
                      carbon_price: float) -> dict:
-    """按平均能源价格作粗粒度可达区域指派，并使用 GPU-hour 松弛容量避免区域过度集中。"""
     region_mean = ctx["price"].mean(axis=1) + carbon_price * ctx["carbon"].mean(axis=1)
     assignment, assigned_gpuh = {}, np.zeros(len(ctx["regions"]))
     relaxed_cap = ctx["available_gpu"] * HORIZON
@@ -212,7 +198,6 @@ def choose_placement(row, candidates: list[str], ctx: dict, used_gpu: np.ndarray
     best = None
     for region in candidates:
         rj = ctx["index"][region]
-        # 阶段一仅影响同等可行解的稳定排序；阶段二仍允许所有 SLA 可达区域重指派。
         region_bias = 0.0 if region == preferred else 1e-7
         for start in starts:
             hours, overlap = overlap_arrays(start, duration)
@@ -272,7 +257,6 @@ def schedule_tasks(workload: pd.DataFrame, ctx: dict, power_map: dict, latency_m
 
 def run_schedule_case(case: str, workload: pd.DataFrame, ctx: dict, power_map: dict,
                       latency_map: dict, carbon_price: float, local_only: bool = False):
-    """进程池工作单元：每个方案拥有独立容量数组，因此不共享可变调度状态。"""
     schedule, used_gpu, used_it = schedule_tasks(
         workload, ctx, power_map, latency_map, carbon_price, local_only=local_only, label=case)
     return case, carbon_price, schedule, used_gpu, used_it
@@ -326,7 +310,6 @@ def schedule_metrics(name: str, schedule: pd.DataFrame, energy_metrics: dict, ca
 
 
 def reconstruct_ai_it(schedule: pd.DataFrame, ctx: dict, power_map: dict) -> np.ndarray:
-    """由已有调度表按分钟级重叠重建逐时 AI IT 负荷，用于 Q1 方案统一口径重算。"""
     require_columns("已有调度", schedule, ["TaskID", "TaskType", "ExecRegion", "StartHour", "Duration_h", "GPU_Demand"])
     ai_it = np.zeros((len(ctx["regions"]), HORIZON), dtype=float)
     for row in schedule.itertuples(index=False):
@@ -355,27 +338,8 @@ def baseline_from_time_data(data_dir: Path) -> dict:
         "GridSell_MWh": float(source["GridSell_MW"].sum()), "Curtailment_MWh": curtail}
 
 
-def make_plots(out_dir: Path, metrics: pd.DataFrame, scheme_b: pd.DataFrame, usage: pd.DataFrame, ctx: dict) -> None:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    plot_dir = out_dir / "plots"; plot_dir.mkdir(parents=True, exist_ok=True)
-    plt.rcParams["axes.unicode_minus"] = False
-    plotted = metrics.dropna(subset=["OperatingCost_CNY"])
-    ax = plotted.set_index("Scenario")[["OperatingCost_CNY", "CarbonEmission_tCO2"]].plot(kind="bar", secondary_y="CarbonEmission_tCO2", figsize=(10, 5))
-    ax.set_ylabel("Operating cost (CNY)"); ax.right_ax.set_ylabel("Carbon emissions (tCO2)"); plt.tight_layout(); plt.savefig(plot_dir / "方案成本碳排对比图.png", dpi=180); plt.close()
-    migration = scheme_b.groupby(["SourceRegion", "ExecRegion"], observed=False)["GPU_h"].sum().unstack(fill_value=0)
-    ax = migration.plot(kind="bar", stacked=True, figsize=(11, 5)); ax.set_ylabel("Migrated / executed GPU-hour"); plt.tight_layout(); plt.savefig(plot_dir / "迁移流向按来源区域汇总图.png", dpi=180); plt.close()
-    fig, axes = plt.subplots(3, 2, figsize=(14, 9), sharex=True)
-    for axis, region in zip(axes.flat, ctx["regions"]):
-        part = usage[(usage["Region"] == region) & usage["Hour"].between(2376, 2405)]
-        axis.plot(part["Hour"], part["GPU_Utilization_Percent"]); axis.set_title(region); axis.set_ylabel("GPU utilization (%)"); axis.grid(alpha=.25)
-    fig.tight_layout(); fig.savefig(plot_dir / "图形处理器利用率图_2376至2405.png", dpi=180); plt.close(fig)
-
-
 def run_schedule_cases(cases: list[tuple[str, float, bool]], workload: pd.DataFrame, ctx: dict,
                        power_map: dict, latency_map: dict, workers: int) -> dict:
-    """执行相互独立的方案；单方案内部保持串行以保证容量累计的确定性。"""
     if workers <= 1 or len(cases) == 1:
         return {case: run_schedule_case(case, workload, ctx, power_map, latency_map, price, local_only)
                 for case, price, local_only in cases}
@@ -460,8 +424,6 @@ def main() -> None:
                 candidate_energy = energy_balance(ctx, candidate_it)[1]
             sensitivity.append(schedule_metrics(f"lambda={value:g}", candidate, candidate_energy, value))
         pd.DataFrame(sensitivity).to_csv(report_dir / "lambda_sensitivity.csv", index=False, encoding="utf-8-sig")
-    if not args.skip_plots:
-        make_plots(args.output_dir, metrics, scheme_b, b_usage, ctx)
     summary = {"carbon_price_CNY_per_tCO2": args.carbon_price, "task_count": int(len(workload)),
         "scheme_a_scheduled_tasks": int(len(scheme_a)), "scheme_b_scheduled_tasks": int(len(scheme_b)),
         "all_constraints_passed": True, "scheme_a": a_energy_metrics, "scheme_b": b_energy_metrics,

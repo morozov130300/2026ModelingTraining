@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""问题三：给定负荷下的储能协同线性规划。
-
-严格依据 t3_plan.md：不调整任务迁移或开工时段，仅使用附件给定的
-Baseline_AI_IT_Load_MW 与 NonAI_IT_Load_MW，逐区域求解储能充放电、
-购售电和新能源分配的 LP。求解器为 SciPy HiGHS（scipy.optimize.linprog）。
-
-运行示例：
-    python t3/t3.py --data-dir 题目 --output-dir t3/output --carbon-price 200
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -17,7 +6,6 @@ import json
 import os
 from pathlib import Path
 
-# 进程池按“场景×区域”并行，每个 HiGHS 进程固定单线程，避免线程过度订阅。
 for _thread_env in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
     os.environ[_thread_env] = "1"
 
@@ -56,7 +44,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=os.cpu_count() or 1,
                         help="并行 LP 工作进程数；默认使用全部逻辑 CPU 核心")
     parser.add_argument("--skip-sensitivity", action="store_true", help="仅运行方案0--4，不运行敏感性场景")
-    parser.add_argument("--skip-plots", action="store_true", help="跳过 PNG 制图")
     return parser.parse_args()
 
 
@@ -120,7 +107,6 @@ def build_region_context(time_data: pd.DataFrame, storage: pd.DataFrame, region:
     it_load = (region_array(time_data, region, "Baseline_AI_IT_Load_MW") +
                region_array(time_data, region, "NonAI_IT_Load_MW"))
     pue = float(row.get("PUE", np.nan))
-    # PUE 存在 GPU 表中；由 main 在 storage 表内合并后传入。
     if not np.isfinite(pue):
         raise ValueError(f"{region} 缺少 PUE")
     total_load = it_load * pue
@@ -146,7 +132,6 @@ def variable_slice(name: str) -> slice:
 
 def solve_region_lp(ctx: dict, carbon_price: float, peak_target: float | None = None,
                     utilization_target: float | None = None) -> dict:
-    """求解单区域 LP；GridPurchase 为含 GridCharge 的毛购电。"""
     try:
         from scipy.optimize import linprog
         from scipy.sparse import lil_matrix
@@ -165,7 +150,6 @@ def solve_region_lp(ctx: dict, carbon_price: float, peak_target: float | None = 
     c[variable_slice("GridPurchase_MW")] = ctx["price"] + carbon_price * ctx["carbon"]
     c[variable_slice("GridSell_MW")] = -ctx["sell_price"]
 
-    # 变量顺序 cR, cG, d, q, y, u, w, soc；功率单位 MW，步长为 1h。
     bounds: list[tuple[float, float | None]] = []
     for name in VARIABLES:
         if name == "RenewableCharge_MW":
@@ -185,7 +169,6 @@ def solve_region_lp(ctx: dict, carbon_price: float, peak_target: float | None = 
         else:
             bounds.extend((ctx["min_soc"], ctx["capacity"]) for _ in range(n))
 
-    # 等式：能量平衡、可再生守恒、SOC 递推。使用稀疏矩阵，避免 6×2407 小时 LP 的稠密内存开销。
     a_eq = lil_matrix((3 * n, size), dtype=float)
     b_eq = np.zeros(3 * n)
     c_r, c_g, discharge = variable_slice("RenewableCharge_MW"), variable_slice("GridCharge_MW"), variable_slice("DischargePower_MW")
@@ -193,7 +176,6 @@ def solve_region_lp(ctx: dict, carbon_price: float, peak_target: float | None = 
                                              variable_slice("DirectRenewable_MW"), variable_slice("Curtailment_MW"),
                                              variable_slice("SOC_MWh"))
     for t in range(n):
-        # q + R + d = TL + cR + cG + y + w
         a_eq[t, purchase.start + t] = 1
         a_eq[t, discharge.start + t] = 1
         a_eq[t, c_r.start + t] = -1
@@ -201,14 +183,12 @@ def solve_region_lp(ctx: dict, carbon_price: float, peak_target: float | None = 
         a_eq[t, sell.start + t] = -1
         a_eq[t, curtail.start + t] = -1
         b_eq[t] = ctx["total_load"][t] - ctx["renewable"][t]
-        # R = u + cR + y + w
         row = n + t
         a_eq[row, direct.start + t] = 1
         a_eq[row, c_r.start + t] = 1
         a_eq[row, sell.start + t] = 1
         a_eq[row, curtail.start + t] = 1
         b_eq[row] = ctx["renewable"][t]
-        # s(t) = s(t-1) + eta_c(cR+cG) - d/eta_d
         row = 2 * n + t
         a_eq[row, soc.start + t] = 1
         a_eq[row, c_r.start + t] = -ctx["eta_c"]
@@ -225,24 +205,19 @@ def solve_region_lp(ctx: dict, carbon_price: float, peak_target: float | None = 
     b_ub = np.empty(rows_per_hour * n + extra_rows, dtype=float)
     row_index = 0
     for t in range(n):
-        # cR + cG <= P_ch；d <= P_dis。
         a_ub[row_index, c_r.start + t] = 1; a_ub[row_index, c_g.start + t] = 1
         b_ub[row_index] = ctx["max_charge"]; row_index += 1
         a_ub[row_index, discharge.start + t] = 1
         b_ub[row_index] = ctx["max_discharge"]; row_index += 1
-        # 计划允许的线性充放互斥松弛：同一小时充电与放电总和不超过较大功率上限。
         a_ub[row_index, c_r.start + t] = 1; a_ub[row_index, c_g.start + t] = 1; a_ub[row_index, discharge.start + t] = 1
         b_ub[row_index] = max(ctx["max_charge"], ctx["max_discharge"]); row_index += 1
-        # GridPurchase 为毛购电，故电网充电必须包含于毛购电。
         a_ub[row_index, c_g.start + t] = 1; a_ub[row_index, purchase.start + t] = -1
         b_ub[row_index] = 0.0; row_index += 1
-        # 直接消纳 + 新能源充电 + 外送不超过 alpha×可用新能源。
         a_ub[row_index, direct.start + t] = 1; a_ub[row_index, c_r.start + t] = 1; a_ub[row_index, sell.start + t] = 1
         b_ub[row_index] = ctx["renewable_alpha"] * ctx["renewable"][t]; row_index += 1
         if peak_target is not None:
             a_ub[row_index, purchase.start + t] = 1; a_ub[row_index, sell.start + t] = -1
             b_ub[row_index] = peak_target; row_index += 1
-    # 终端库存不低于初始库存，2406 的充放电边界已由 bounds 固化。
     a_ub[row_index, soc.stop - 1] = -1
     b_ub[row_index] = -ctx["initial_soc"]; row_index += 1
     if utilization_target is not None:
@@ -262,7 +237,6 @@ def solve_case(time_data: pd.DataFrame, storage: pd.DataFrame, regions: list[str
                carbon_price: float, capacity_factor: float = 1.0,
                renewable_alpha: float = 1.0, peak_target: float | None = None,
                utilization_target: float | None = None) -> tuple[dict, pd.DataFrame]:
-    """串行兼容接口；批量全量运行由 solve_case_batch 调度。"""
     results, frames = {}, []
     for region in regions:
         ctx = build_region_context(time_data, storage, region, capacity_factor, renewable_alpha)
@@ -276,13 +250,11 @@ def solve_case(time_data: pd.DataFrame, storage: pd.DataFrame, regions: list[str
 
 def solve_region_job(label: str, region: str, ctx: dict, carbon_price: float,
                      peak_target: float | None, utilization_target: float | None) -> tuple[str, str, dict]:
-    """进程池工作单元：每项为一个完全独立的区域 LP。"""
     return label, region, solve_region_lp(ctx, carbon_price, peak_target, utilization_target)
 
 
 def solve_case_batch(case_specs: list[dict], storage: pd.DataFrame, regions: list[str],
                      workers: int) -> dict[str, tuple[dict, pd.DataFrame]]:
-    """一次提交全部场景×区域 LP，使全量扫描能够占满 CPU 而不改变任何模型精度。"""
     jobs = []
     for spec in case_specs:
         for region in regions:
@@ -490,7 +462,6 @@ def run_sensitivity(time_data: pd.DataFrame, storage: pd.DataFrame, regions: lis
         if result["success"]:
             record.update(metrics(f"{dimension}", frame, price))
         rows.append(record)
-    # 计划的极端可再生下降 20% 场景：仅改变可再生输入，不改变给定 IT 负荷。
     stressed = time_data.copy()
     stressed["AvailableRenewable_MW"] *= 0.8
     result, frame = solve_case(stressed, storage, regions, args.carbon_price)
@@ -501,54 +472,6 @@ def run_sensitivity(time_data: pd.DataFrame, storage: pd.DataFrame, regions: lis
         record.update(metrics("renewable_minus_20_percent", frame, args.carbon_price))
     rows.append(record)
     return pd.DataFrame(rows)
-
-
-def make_plots(out_dir: Path, baseline: pd.DataFrame, scheme1: pd.DataFrame, scheme2: pd.DataFrame,
-               scheme3: pd.DataFrame | None, scheme4: pd.DataFrame | None, peak_frontier: pd.DataFrame,
-               util_frontier: pd.DataFrame, comparison: pd.DataFrame, sensitivity: pd.DataFrame | None,
-               regions: list[str]) -> None:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    plot_dir = out_dir / "plots"; plot_dir.mkdir(parents=True, exist_ok=True)
-    plt.rcParams["axes.unicode_minus"] = False
-    # 代表 96 小时窗口：使用 F 区净购电最高的时段附近。
-    f_peak = scheme2.loc[scheme2["Region"].eq("RegionF"), ["Hour", "NetGridImport_MW"]]
-    anchor = int(f_peak.loc[f_peak["NetGridImport_MW"].idxmax(), "Hour"])
-    start = max(0, min(HORIZON - 96, anchor - 48))
-    fig, axes = plt.subplots(3, 2, figsize=(14, 10), sharex=True)
-    for ax, region in zip(axes.flat, regions):
-        part = scheme2[(scheme2["Region"] == region) & scheme2["Hour"].between(start, start + 95)]
-        base = baseline[(baseline["Region"] == region) & baseline["Hour"].between(start, start + 95)]
-        ax.plot(part["Hour"], part["SOC_MWh"], label="SOC")
-        ax.plot(part["Hour"], part["NetGridImport_MW"], label="Optimized net import")
-        ax.plot(base["Hour"], base["NetGridImport_MW"], label="Baseline net import", alpha=.65)
-        ax.set_title(region); ax.grid(alpha=.25)
-    axes.flat[0].legend(fontsize=8); fig.tight_layout(); fig.savefig(plot_dir / "储能时序图_96小时.png", dpi=180); plt.close(fig)
-    names = ["AttachmentBaseline", "Scheme1_NoStorage_RenewableFirst", "Scheme2_StorageLP"]
-    frames = [baseline, scheme1, scheme2]
-    fig, ax = plt.subplots(figsize=(11, 5)); bottom = np.zeros(len(names))
-    for column, label in [("DirectRenewable_MW", "Direct renewable"), ("RenewableCharge_MW", "Renewable charge"),
-                          ("GridCharge_MW", "Grid charge"), ("GridSell_MW", "Grid sell"),
-                          ("Curtailment_MW", "Curtailment"), ("GridPurchase_MW", "Grid purchase")]:
-        values = np.asarray([frame[column].sum() for frame in frames])
-        ax.bar(names, values, bottom=bottom, label=label); bottom += values
-    ax.tick_params(axis="x", rotation=15); ax.legend(ncol=3, fontsize=8); ax.set_ylabel("MWh"); fig.tight_layout(); fig.savefig(plot_dir / "能源分配对比图.png", dpi=180); plt.close(fig)
-    for frontier, filename, x, label in [(peak_frontier, "成本削峰前沿图.png", "PeakNetGridImport_MW", "Peak net import (MW)"),
-                                         (util_frontier, "成本利用率前沿图.png", "RenewableUtilization", "Renewable utilization")]:
-        feasible = frontier[frontier["Feasible"]]
-        if not feasible.empty:
-            fig, ax = plt.subplots(figsize=(7, 5)); ax.plot(feasible[x], feasible["OperatingCost_CNY"], marker="o")
-            ax.set_xlabel(label); ax.set_ylabel("Operating cost (CNY)"); ax.grid(alpha=.25); fig.tight_layout(); fig.savefig(plot_dir / filename, dpi=180); plt.close(fig)
-    peak_data = pd.DataFrame({name: frame.groupby("Region")["NetGridImport_MW"].max() for name, frame in zip(names, frames)})
-    peak_data.plot(kind="bar", figsize=(10, 5)); plt.ylabel("Peak net import (MW)"); plt.tight_layout(); plt.savefig(plot_dir / "区域峰值净购电图.png", dpi=180); plt.close()
-    if sensitivity is not None:
-        feasible = sensitivity[sensitivity["Feasible"]]
-        fig, ax = plt.subplots(figsize=(9, 5))
-        for dimension, group in feasible.groupby("Dimension"):
-            x = group["CarbonPrice_CNY_per_tCO2"] if dimension == "carbon_price" else (group["CapacityFactor"] if dimension == "capacity_factor" else group["RenewableAlpha"])
-            ax.plot(x, group["OperatingCost_CNY"], marker="o", label=dimension)
-        ax.set_ylabel("Operating cost (CNY)"); ax.legend(); ax.grid(alpha=.25); fig.tight_layout(); fig.savefig(plot_dir / "敏感性成本图.png", dpi=180); plt.close(fig)
 
 
 def main() -> None:
@@ -669,8 +592,6 @@ def main() -> None:
             sensitivity_rows.append(record)
         sensitivity = pd.DataFrame(sensitivity_rows)
         sensitivity.to_csv(report_dir / "sensitivity_analysis.csv", index=False, encoding="utf-8-sig")
-    if not args.skip_plots:
-        make_plots(args.output_dir, baseline, scheme1, scheme2, scheme3, scheme4, peak_frontier, util_frontier, comparison, sensitivity, regions)
     summary = {"carbon_price_CNY_per_tCO2": args.carbon_price, "horizon_hours": HORIZON,
                "given_load": "Baseline_AI_IT_Load_MW + NonAI_IT_Load_MW", "task_schedule_reoptimized": False,
                "solver": "scipy.optimize.linprog(method=highs)", "all_constraints_passed": True,

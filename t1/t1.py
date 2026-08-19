@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-"""问题一：统计分析、短期预测与基础算力调度。
-
-依赖：python>=3.9, numpy, pandas, openpyxl, scikit-learn, matplotlib
-运行：python t1.py [--data-dir ../题目] [--output-dir output]
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -30,7 +23,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, default=here.parent / "题目")
     parser.add_argument("--output-dir", type=Path, default=here / "output")
     parser.add_argument("--skip-forecast", action="store_true", help="跳过短期预测")
-    parser.add_argument("--skip-plots", action="store_true", help="跳过绘图")
     return parser.parse_args()
 
 
@@ -339,58 +331,6 @@ def verify_constraints(schedule, workload, usage, gpu, latency_map, power_map, t
     return result
 
 
-def make_plots(type_summary, margins, predictions, schedule, usage, time_data, regions, out_dir):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plot_dir = out_dir / "plots"
-    plot_dir.mkdir(parents=True, exist_ok=True)
-    plt.rcParams.update({
-        "axes.unicode_minus": False,
-        "font.size": 11,
-        "axes.titlesize": 15,
-        "axes.labelsize": 12,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
-        "legend.fontsize": 10,
-    })
-
-    shares = type_summary[["TaskCount_Share", "GPU_h_Share", "IT_MWh_Share"]].T * 100
-    ax = shares.plot(kind="bar", figsize=(10, 5))
-    ax.set_ylabel("Share (%)"); ax.set_xlabel(""); ax.legend(title="Task type"); ax.grid(axis="y", alpha=.25)
-    plt.tight_layout(); plt.savefig(plot_dir / "任务类型占比图.png", dpi=180); plt.close()
-
-    if predictions is not None:
-        total = predictions[predictions["Model"].eq("GBDT")].groupby("Hour")[["Actual_GPU_h", "Predicted_GPU_h"]].sum()
-        ax = total.plot(figsize=(10, 5), marker="o")
-        ax.set_ylabel("GPU-hour"); ax.set_title("Forecast vs Actual (All regions and task types)", fontsize=15); ax.grid(alpha=.25)
-        plt.tight_layout(); plt.savefig(plot_dir / "预测与实际对比图_2376至2399.png", dpi=180); plt.close()
-
-    colors = {"RealTimeInference": "#4C78A8", "BatchInference": "#F58518", "AITraining": "#54A24B"}
-    last = schedule[(schedule["ArrivalHour"] >= 2376) & (schedule["ArrivalHour"] <= 2399)].copy()
-    fig, axes = plt.subplots(len(regions), 1, figsize=(14, 12), sharex=True)
-    for ax, region in zip(axes, regions):
-        part = last[last["ExecRegion"].eq(region)].sort_values(["StartHour", "TaskID"]).reset_index(drop=True)
-        for j, row in part.iterrows():
-            ax.barh(j, row["Duration_h"], left=row["StartHour"], height=.8, color=colors[row["TaskType"]])
-        ax.set_ylabel(region); ax.set_yticks([]); ax.axvline(2400, color="black", ls="--", lw=.8); ax.grid(axis="x", alpha=.2)
-    axes[-1].set_xlabel("Hour"); axes[-1].set_xlim(2376, 2406)
-    handles = [plt.Rectangle((0, 0), 1, 1, color=colors[t], label=t) for t in TASK_TYPES]
-    fig.legend(handles=handles, loc="upper center", ncol=3); fig.tight_layout(rect=(0, 0, 1, .97))
-    fig.savefig(plot_dir / "调度甘特图_2376至2406.png", dpi=180); plt.close(fig)
-
-    baseline = time_data[["Hour", "Region", "GPU_Utilization_Percent"]]
-    fig, axes = plt.subplots(3, 2, figsize=(14, 10), sharex=True)
-    for ax, region in zip(axes.flat, regions):
-        ours = usage[(usage["Region"].eq(region)) & usage["Hour"].between(2376, 2405)]
-        base = baseline[(baseline["Region"].eq(region)) & baseline["Hour"].between(2376, 2405)]
-        ax.plot(ours["Hour"], ours["GPU_Utilization_Percent"], label="Scheduled")
-        ax.plot(base["Hour"], base["GPU_Utilization_Percent"], label="Baseline", alpha=.75)
-        ax.set_title(region, fontsize=14); ax.set_ylabel("GPU utilization (%)"); ax.grid(alpha=.2)
-    axes.flat[0].legend(); fig.tight_layout(); fig.savefig(plot_dir / "图形处理器利用率图_2376至2405.png", dpi=180); plt.close(fig)
-
-
 def write_summary(out_dir, workload, schedule, type_summary, verification):
     summary = {
         "task_count": int(len(workload)),
@@ -420,9 +360,6 @@ def main():
     schedule, usage, *_ = schedule_tasks(workload, gpu, time_data, power_map, latency_map, regions, args.output_dir)
     print("验证 C1-C7……")
     verification = verify_constraints(schedule, workload, usage, gpu, latency_map, power_map, time_data, args.output_dir)
-    if not args.skip_plots:
-        print("绘制结果图……")
-        make_plots(type_summary, margins, predictions, schedule, usage, time_data, regions, args.output_dir)
     write_summary(args.output_dir, workload, schedule, type_summary, verification)
     print(f"完成。结果目录：{args.output_dir.resolve()}")
 

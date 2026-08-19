@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""问题四：多区域“算--储--电”联合优化。
-
-实现 t4_plan.md 的两层分解框架：
-1. 外层以整数小时开工、分钟级重叠和 SLA/容量约束进行滚动贪心调度；
-2. 内层复用问题三的逐区域储能 LP，并把能源平衡约束的影子价格反馈给外层；
-3. 输出 A0--A4 消融、Pareto 扫描和三类压力情景结果。
-
-运行：python t4/t4.py --data-dir 题目 --output-dir t4/output
-依赖：python>=3.9, numpy, pandas, openpyxl, scipy, matplotlib
-"""
 from __future__ import annotations
 
 import argparse
@@ -25,8 +14,6 @@ from pathlib import Path
 
 CPU_COUNT = max(1, os.cpu_count() or 1)
 LP_THREADS = max(1, math.ceil(CPU_COUNT / 6))
-# 固定使用本机全部逻辑 CPU：最多 6 个区域 LP 同时运行，
-# 每个 HiGHS/BLAS 子问题分配 CPU_COUNT/6 个线程。
 for _thread_env in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                     "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
     os.environ[_thread_env] = str(LP_THREADS)
@@ -64,7 +51,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--alpha-values", type=float, nargs="*", default=[0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
     p.add_argument("--lambda-values", type=float, nargs="*", default=[0, 50, 100, 200, 300, 500])
     p.add_argument("--skip-sensitivity", action="store_true")
-    p.add_argument("--skip-plots", action="store_true")
     return p.parse_args()
 
 
@@ -152,12 +138,6 @@ def prepare_energy_arrays(time_data, storage, regions, alpha=1.0):
 
 
 def initial_signal(energy, carbon_price):
-    """按问题二口径计算无储能基准下的逐时边际供电成本信号。
-
-    新能源富余且超过外送上限时，增加任务只会减少弃电，边际成本为 0；
-    富余不超过外送上限时，增加任务会减少外送，边际成本为售电机会成本；
-    新能源不足时，边际成本为购电成本加碳价成本。
-    """
     signal = {}
     for r, a in energy.items():
         total = a["nonai"] * float(a["storage"]["PUE"])
@@ -179,7 +159,6 @@ def initial_signal(energy, carbon_price):
 
 
 def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, batch_size, mode="joint", progress_label=None):
-    """滚动窗口贪心外层；实时任务严格本地、到达即执行。"""
     regions = list(gpu.index)
     ri = {r: i for i, r in enumerate(regions)}
     horizon = HORIZON
@@ -191,8 +170,6 @@ def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, ba
     tasks["Urgency"] = tasks["LatestStart"] - tasks["ArrivalHour"]
     tasks["Priority"] = np.where(tasks["TaskType"].eq("RealTimeInference"), 0, np.where(tasks["TaskType"].eq("AITraining"), 1, 2))
     tasks["TaskGroup"] = np.where(tasks["TaskType"].eq("RealTimeInference"), 0, 1)
-    # 先完成全部实时任务，再按弹性任务截止紧迫度处理；这样弹性任务不会
-    # 先占用本地容量，导致后续实时任务无法按题目要求到达即执行。
     tasks = tasks.sort_values(
         ["TaskGroup", "ArrivalHour", "LatestStart", "Priority", "GPU_Demand"],
         ascending=[True, True, True, True, False],
@@ -215,8 +192,6 @@ def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, ba
         if row.TaskType == "RealTimeInference":
             starts = [int(row.ArrivalHour)]
         elif mode == "arrival":
-            # A1 优先到达即执行；若到达时刻容量不足，再允许弹性任务在截止窗口内后移，
-            # 否则迁移基准会因单个拥塞小时直接整体失败。
             starts = [int(row.ArrivalHour)]
         else:
             end = min(latest, int(row.ArrivalHour) + max(1, window_hours) - 1)
@@ -283,8 +258,6 @@ def schedule_tasks(workload, gpu, energy, latency_map, signals, window_hours, ba
 
         best = feasible_starts(starts)
         if best is None and mode == "arrival" and row.TaskType != "RealTimeInference":
-            # 不再受滚动窗口限制：A1 的回退只为消除到达小时拥塞，
-            # 必须检查该弹性任务完整的到达--截止可行区间。
             fallback_starts = list(range(int(row.ArrivalHour), latest + 1))
             best = feasible_starts(fallback_starts)
         if best is None:
@@ -317,12 +290,10 @@ def _schedule_case_job(args):
 
 
 def _running_from_unc_path():
-    """Windows 网络共享路径无法保证 spawn 子进程可重新读取主脚本。"""
     return str(Path(__file__).resolve()).startswith(("\\\\", "//"))
 
 
 def _relaunch_from_local_copy():
-    """从 UNC 启动时复制主脚本到本地临时目录，启用 Windows 进程池。"""
     if not _running_from_unc_path() or os.environ.get("T4_LOCAL_COPY") == "1":
         return False
     source = Path(__file__).resolve()
@@ -346,15 +317,12 @@ def run_independent_schedules(workload, gpu, energy, latency_map, args):
     jobs = [
         ("A0", workload, gpu, energy, latency_map, base_signal,
          args.window_hours, args.batch_size, "local"),
-        # A1 与 A2 使用同一问题二口径的逐时边际能源信号；
-        # 两者只在是否允许弹性任务时间平移上区分。
         ("A1", workload, gpu, energy, latency_map, joint_signal,
          args.window_hours, args.batch_size, "arrival"),
         ("A2", workload, gpu, energy, latency_map, joint_signal,
          args.window_hours, args.batch_size, "joint"),
     ]
     max_workers = min(8, max(1, int(args.workers)), len(jobs))
-    # UNC 启动时已由本地副本重新执行，因此这里可以安全使用进程池。
     executor_type = ProcessPoolExecutor
     if max_workers == 1:
         solved = [_schedule_case_job(job) for job in jobs]
@@ -402,7 +370,6 @@ def solve_region_lp(region, loads, ctx, carbon_price):
     aeq = lil_matrix((3*n, size)); beq = np.zeros(3*n)
     cr,cg,d,q,y,u,w,s = [variable_slice(x) for x in LP_VARIABLES]
     for t in range(n):
-        # q + R + d = TL + cR + cG + y + w；直接消纳 u 由下一条新能源守恒隐含。
         aeq[t,q.start+t]=1; aeq[t,d.start+t]=1; aeq[t,cr.start+t]=-1; aeq[t,cg.start+t]=-1; aeq[t,y.start+t]=-1; aeq[t,w.start+t]=-1; beq[t]=total[t]-ctx["renewable"][t]
         aeq[n+t,u.start+t]=1; aeq[n+t,cr.start+t]=1; aeq[n+t,y.start+t]=1; aeq[n+t,w.start+t]=1; beq[n+t]=ctx["renewable"][t]
         aeq[2*n+t,s.start+t]=1; aeq[2*n+t,cr.start+t]=-float(p["ChargeEfficiency"]); aeq[2*n+t,cg.start+t]=-float(p["ChargeEfficiency"]); aeq[2*n+t,d.start+t]=1/float(p["DischargeEfficiency"])
@@ -704,19 +671,6 @@ def verify(schedule, frame, workload, gpu, storage, latency_map):
     return pd.DataFrame(checks)
 
 
-def make_plots(out, schedule, energy_frame, convergence, ablation, scenario_frame):
-    try:
-        import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-    except ImportError: return
-    d=out/"plots"; d.mkdir(parents=True,exist_ok=True)
-    convergence.plot(x="Iteration",y="Objective_CNY",marker="o",title="Benders-like feedback convergence",grid=True).get_figure().savefig(d/"反馈收敛图.png",dpi=150); plt.close("all")
-    ablation.set_index("Scenario")[["OperatingCost_CNY","CarbonEmission_tCO2","PeakNetGridImport_MW"]].plot(kind="bar",subplots=True,figsize=(12,10),title="A0-A4 ablation"); plt.tight_layout(); plt.savefig(d/"消融分析图.png",dpi=150); plt.close("all")
-    for r,g in energy_frame.groupby("Region"):
-        g=g[g.Hour.between(0,95)]; plt.plot(g.Hour,g.Total_Load_MW,label=f"{r} load"); plt.plot(g.Hour,g.SOC_MWh,label=f"{r} SOC")
-    plt.legend(ncol=3,fontsize=7); plt.grid(alpha=.2); plt.tight_layout(); plt.savefig(d/"区域负荷储能状态图_96小时.png",dpi=150); plt.close("all")
-    scenario_frame.pivot(index="Parameter",columns="Scenario",values="Objective_CNY").plot(marker="o",figsize=(9,5)); plt.grid(alpha=.2); plt.tight_layout(); plt.savefig(d/"敏感性场景对比图.png",dpi=150); plt.close("all")
-
-
 def main():
     args=parse_args()
     if args.carbon_price < 0 or args.window_hours < 1 or args.batch_size < 1 or args.max_iterations < 1 or args.workers < 1:
@@ -726,8 +680,6 @@ def main():
     workload,gpu,storage,time_data,power_map,latency_map=load_data(args.data_dir,args.renewable_scale)
     energy=prepare_energy_arrays(time_data,storage,REGIONS,args.renewable_alpha)
     out=args.output_dir; (out/"schedule").mkdir(exist_ok=True); (out/"energy").mkdir(exist_ok=True); (out/"reports").mkdir(exist_ok=True)
-    # A0：纯本地、到达即执行；A1：空间迁移；A2：空间+时间；A3：固定 A2 后储能；A4：完整反馈。
-    # A0/A1/A2 的容量状态互相独立，使用多进程同时执行，结果与原串行算法完全一致。
     print(
         f"并行配置：CPU={CPU_COUNT}，worker={args.workers}，"
         "敏感性场景最多8进程；每场景内部区域LP串行",
@@ -762,7 +714,6 @@ def main():
         print("阶段 5/5 完成：敏感性分析结果已写入", flush=True)
     else:
         scenario_frame = pd.DataFrame()
-    if not args.skip_plots: make_plots(out,a4,a4_energy,convergence,ablation,scenario_frame if not scenario_frame.empty else pd.DataFrame({"Scenario":[],"Parameter":[],"Objective_CNY":[]}))
     summary={"model":"two-layer Benders-like task scheduling plus regional storage LP","carbon_price_CNY_per_tCO2":args.carbon_price,"window_hours":args.window_hours,"batch_size":args.batch_size,"iterations":int(len(convergence)),"task_count":int(len(workload)),"scheduled_task_count":int(len(a4)),"all_constraints_passed":True,"pressure_scenario":"AvailableRenewable_MW × 0.8","scenarios":ablation.to_dict(orient="records")}
     (out/"summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
     print(f"完成。结果目录：{out.resolve()}",flush=True)

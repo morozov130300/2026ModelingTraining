@@ -1,18 +1,3 @@
-#!/usr/bin/env python3
-"""合并 CPU 与 GPU 版问题二输出，生成数据全面且正确的 output。
-
-合并原则：
-- 以 CPU 版 t2/output 的完整结构为骨架（含附件基线、问题一调度、方案 A/B、
-  边际贡献、约束验证、能耗平衡、调度表、小时利用率）。
-- 补齐 GPU 版独有的 Lambda 灵敏度数据（CPU 与 GPU 的 lambda 结果一致，
-  以 GPU 版为准，避免重复计算）。
-- 调度、能耗、约束验证等 CPU/GPU 完全一致的文件直接复用 CPU 版。
-- summary.json 合并 CPU 的指标与 GPU 的后端/设备元信息。
-
-运行：
-    python3 t2/merge_output.py
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -40,17 +25,14 @@ def main() -> None:
     if not cpu.exists() or not gpu.exists():
         raise FileNotFoundError(f"缺少 CPU 或 GPU 输出目录: {cpu} / {gpu}")
 
-    # 1. 复制 CPU 版完整结构（调度、能耗、约束验证、边际贡献、场景对比、图表）
     if out.exists():
         shutil.rmtree(out)
     shutil.copytree(cpu, out)
 
-    # 2. 用 GPU 版 Lambda 灵敏度覆盖（CPU 与 GPU 结果一致，以 GPU 为准）
     gpu_lambda = gpu / "reports" / "lambda_sensitivity.csv"
     if gpu_lambda.exists():
         shutil.copy2(gpu_lambda, out / "reports" / "lambda_sensitivity.csv")
 
-    # 3. 合并 summary.json：CPU 指标 + GPU 后端/设备元信息
     cpu_summary = json.loads((cpu / "summary.json").read_text(encoding="utf-8"))
     gpu_summary = json.loads((gpu / "summary.json").read_text(encoding="utf-8"))
     merged_summary = dict(cpu_summary)
@@ -61,7 +43,6 @@ def main() -> None:
         json.dumps(merged_summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # 4. 校验合并结果
     required = [
         out / "reports" / "scenario_comparison.csv",
         out / "reports" / "lambda_sensitivity.csv",
