@@ -1,2 +1,0 @@
-﻿Scenario,OperatingCost_CNY,CarbonEmission_tCO2,Objective_CNY,GridPurchase_MWh,GridSell_MWh,Curtailment_MWh,DirectRenewable_MWh,RenewableCharge_MWh,GridCharge_MWh,Discharge_MWh,AvailableRenewable_MWh,RenewableUtilization,PeakNetGridImport_MW,MeanRegionalNetGridStd_MW,MaxRegionalNetGridStd_MW
-StorageMarginalBenefit_Scheme1_to_Scheme2,39385683.89932299,8.850562571909007,39387454.01183736,31.597867090000022,1330267.7685945295,184764.1246723784,6514435.305982867,0.0,0.0,0.0,11550768.36,0.6791498911659758,31.597867090000022,19.701860759823997,45.748863675104

@@ -1,8 +1,0 @@
-{
-  "backend":"cupy",
-  "gpu":"NVIDIA GeForce RTX 5070 Laptop GPU",
-  "task_count":50000,
-  "scheme_a_scheduled_tasks":50000,
-  "scheme_b_scheduled_tasks":50000,
-  "all_constraints_passed":true
-}

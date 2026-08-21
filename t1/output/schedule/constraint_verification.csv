@@ -1,9 +1,0 @@
-﻿Constraint,ViolationCount,Status,Detail
-C1_UniqueAssignment,0,PASS,每个任务恰好有一个执行区域
-C2_RealTimeImmediateStart,0,PASS,实时任务到达即开工
-C3_Latency,0,PASS,实际网络时延不超过 SLA
-C4_Deadline,0,PASS,任务在最晚完成时点前完成
-C5_GPUCapacity,0,PASS,逐时折算 GPU-hour 不超过可用 GPU
-C6_ITPower,0,PASS,NonAI 与 AI IT 功率之和不超过 IT 上限
-C7_NoHour2406,0,PASS,所有任务在时点 2406 前完成
-ArrivalBoundary,0,PASS,任务不得早于到达时刻开始
