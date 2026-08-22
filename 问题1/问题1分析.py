@@ -153,10 +153,9 @@ def difference_table(data):
         result.loc[mask, "组内FDR校正p值"] = bh(result.loc[mask, "原始p值"])
     result["全局BH校正p值"] = bh(result["原始p值"])
     result["潜力评级"] = np.select(
-        [(result["全局BH校正p值"] < .05) & (result["Cliff's delta"].abs() >= .5) & (result["AUC强度"] >= .8),
-         (result["全局BH校正p值"] < .05) & (result["Cliff's delta"].abs() >= .3),
-         (result["全局BH校正p值"] < .05)],
-        ["高", "中", "低"], default="低")
+        [(result["全局BH校正p值"] < 0.01) & (result["Cliff's delta"].abs() > 0.47),
+         (result["全局BH校正p值"] < 0.05) & (result["Cliff's delta"].abs() > 0.33)],
+        ["高", "中"], default="低")
     return result
 
 
@@ -212,12 +211,12 @@ def save_distribution_figures(data, descriptive):
         fig.tight_layout()
         save_figure(fig, FIGURE_DIR / f"分布_{group_name}.png")
     for col in ["WBC", "N", "L", "M", "PLT"]:
-        transform_col = f"{col}_变换后"
+        transform_col = f"log_{col}"
         fig, axes = plt.subplots(1, 2, figsize=(10, 4))
         plot_group_hist(axes[0], data, col)
         plot_group_hist(axes[1], data, transform_col)
         axes[0].set_title(f"{col}原始刻度")
-        axes[1].set_title(f"{col}Box-Cox变换后")
+        axes[1].set_title(f"{col}变换后")
         fig.tight_layout()
         save_figure(fig, FIGURE_DIR / f"变换对比_{col}.png")
     fig, ax = plt.subplots(figsize=(7, 4))
@@ -386,7 +385,7 @@ def reference_abnormal(data):
 
 def clustering_analysis(data):
     # 仅用 L/M/N 聚类（最具区分力的三个变量），评估是否值得保留对照框架
-    cols = [f"{c}_变换后" for c in ["L", "M", "N"]]
+    cols = [f"log_{c}" for c in ["L", "M", "N"]]
     x = data[cols].copy()
     x = pd.DataFrame(StandardScaler().fit_transform(x), columns=cols, index=data.index)
     scores = []
@@ -415,7 +414,7 @@ def clustering_analysis(data):
     fig.tight_layout()
     save_figure(fig, FIGURE_DIR / "聚类簇剖面_LMN.png")
     # 同时尝试全变量聚类作为对比
-    all_cols = [f"{c}_变换后" for c in BLOOD]
+    all_cols = [f"log_{c}" for c in BLOOD]
     x_all = pd.DataFrame(StandardScaler().fit_transform(data[all_cols]), columns=all_cols, index=data.index)
     all_scores = []
     for k in range(2, 7):
@@ -571,7 +570,7 @@ def _reference_abnormal_summary(data):
 
 def _clustering_summary(data):
     """按方案 9.1-9.5 生成对照框架摘要（仅用 L/M/N）。"""
-    cols = [f"{c}_变换后" for c in ["L", "M", "N"]]
+    cols = [f"log_{c}" for c in ["L", "M", "N"]]
     x = pd.DataFrame(StandardScaler().fit_transform(data[cols]), columns=cols, index=data.index)
     scores = []
     for k in range(2, 7):

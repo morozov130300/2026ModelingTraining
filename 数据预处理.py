@@ -216,7 +216,8 @@ def inspect_suspicious(data):
             iqr = q3 - q1
             flag = z.abs() > 3
             box_flag = (values < q1 - 1.5 * iqr) | (values > q3 + 1.5 * iqr)
-            for index in group.index[flag.fillna(False) | box_flag.fillna(False)]:
+            # 方案4.1：稳健z-score与箱线图1.5×IQR取交集
+            for index in group.index[flag.fillna(False) & box_flag.fillna(False)]:
                 rows.append({"行号": int(index + 1), "序号": data.loc[index, "序号"], "来源": group_name, "变量": column, "数值": data.loc[index, column], "稳健z分数": float(z.loc[index]) if pd.notna(z.loc[index]) else np.nan, "箱线图1.5IQR标记": bool(box_flag.loc[index]), "处理": "标记并保留"})
     return pd.DataFrame(rows)
 
@@ -248,8 +249,8 @@ def transform_data(data):
             lambda_estimate, boxcox_skew, log_skew, raw_p, boxcox_p, log_p = [np.nan] * 6
             selected_method, selected, selected_skew, selected_p = "不变换", values, original_skew, raw_p
             decision_basis = "有效非缺失值不足以进行Box-Cox比较，保留原始值"
-        transformed[f"{column}_变换后"] = data[column]
-        transformed.loc[values.index, f"{column}_变换后"] = selected
+        transformed[f"log_{column}"] = data[column]
+        transformed.loc[values.index, f"log_{column}"] = selected
         decision_rows.append({"指标": column, "原始偏度": original_skew, "Box-Cox λ": lambda_estimate, "Box-Cox后偏度": boxcox_skew, "log后偏度": log_skew, "变换后偏度": selected_skew, "Shapiro-Wilk变换前p值": raw_p, "Shapiro-Wilk Box-Cox后p值": boxcox_p, "Shapiro-Wilk log后p值": log_p, "变换方式": selected_method, "平移常数c": shift, "决策依据": decision_basis})
     return transformed, pd.DataFrame(decision_rows)
 
@@ -259,7 +260,7 @@ def save_distribution_plots(raw, transformed, decision):
         fig, axes = plt.subplots(2, 3, figsize=(16, 8))
         for label, name in [(0, "健康组"), (1, "流感A组")]:
             raw_values = raw.loc[raw.label == label, column].dropna()
-            transformed_values = transformed.loc[transformed.label == label, f"{column}_变换后"].dropna() if f"{column}_变换后" in transformed.columns else raw_values
+            transformed_values = transformed.loc[transformed.label == label, f"log_{column}"].dropna() if f"log_{column}" in transformed.columns else raw_values
             axes[0, 0].hist(raw_values, alpha=0.5, label=name, bins=20)
             axes[0, 1].hist(transformed_values, alpha=0.5, label=name, bins=20)
             axes[0, 2].boxplot(raw_values, positions=[label + 1], tick_labels=[name])
@@ -351,7 +352,10 @@ def main():
     potential = pd.DataFrame(potential_rows)
     valid = potential["原始p值"].notna()
     potential.loc[valid, "BH-FDR校正p值"] = bh_fdr(potential.loc[valid, "原始p值"])
-    potential["潜力分级"] = "待阈值确认"
+    potential["潜力分级"] = np.select(
+        [(potential["BH-FDR校正p值"] < 0.01) & (potential["Cliff's delta"].abs() > 0.47),
+         (potential["BH-FDR校正p值"] < 0.05) & (potential["Cliff's delta"].abs() > 0.33)],
+        ["高", "中"], default="低")
     potential.to_csv(OUTPUT_DIR / "潜力分级表.csv", index=False, encoding="utf-8-sig")
 
     correlation = clean[NUMERIC_COLUMNS].corr(method="spearman")
@@ -406,7 +410,7 @@ def main():
     sex_balance.to_csv(OUTPUT_DIR / "性别平衡核查.csv", index=False, encoding="utf-8-sig")
     counts = clean["label"].value_counts().to_dict()
     n1, n2 = int(counts.get(1, 0)), int(counts.get(0, 0))
-    pd.DataFrame([{"总样本量N": len(clean), "流感组n1": n1, "健康组n2": n2, "n1/n2": n1 / n2 if n2 else np.nan, "是否超过1比3": bool(n1 / n2 > 3 or n2 / n1 > 3) if n1 and n2 else np.nan, "重采样": "不进行", "少数类": "健康组" if n2 < n1 else "流感A组", "EPV按10事件/变量建议上限": int(min(n1, n2) // 10), "影响说明": "小样本侧中位数/IQR不稳定，已输出bootstrap置信区间；检验不显著不等于无差异；EPV约束建模变量数"}]).to_csv(OUTPUT_DIR / "样本量差异核查.csv", index=False, encoding="utf-8-sig")
+    pd.DataFrame([{"总样本量N": len(clean), "流感组n1": n1, "健康组n2": n2, "n1/n2": n1 / n2 if n2 else np.nan, "重采样": "不进行", "少数类": "健康组" if n2 < n1 else "流感A组", "EPV按10事件/变量建议上限": int(min(n1, n2) // 10), "影响说明": "小样本侧中位数/IQR不稳定，已输出bootstrap置信区间；检验不显著不等于无差异；EPV约束建模变量数"}]).to_csv(OUTPUT_DIR / "样本量差异核查.csv", index=False, encoding="utf-8-sig")
 
     model_data = transformed.copy()
     for column in NUMERIC_COLUMNS:
