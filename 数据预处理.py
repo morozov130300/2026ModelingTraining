@@ -188,9 +188,20 @@ def remove_recording_errors(data, cleaning_log):
     for index in data.index[hb_bad]:
         error_rows.append({"行号": int(index + 1), "序号": data.loc[index, "序号"], "来源": data.loc[index, "来源"], "变量": "HB", "原值": data.loc[index, "HB"], "处理": "剔除整行", "理由": "HB超过200 g/L"})
     error_mask |= hb_bad
+    # 问题1修正：WBC单位混用——值>100几乎肯定是×10⁶/L混入×10⁹/L列，除以1000修正
+    wbc_unit_fix = data["WBC"].notna() & (data["WBC"] > 100)
+    for index in data.index[wbc_unit_fix]:
+        original = data.loc[index, "WBC"]
+        data.loc[index, "WBC"] = original / 1000.0
+        error_rows.append({"行号": int(index + 1), "序号": data.loc[index, "序号"], "来源": data.loc[index, "来源"], "变量": "WBC", "原值": original, "处理": f"除以1000修正为{original / 1000.0}", "理由": "WBC>100×10⁹/L在生理上不可能，几乎肯定是×10⁶/L混入×10⁹/L列"})
+    # 问题2修正：RDW-SD混入RDW-CV列——值>20%极罕见，符合RDW-SD(fL)正常范围，剔除整行
+    rdw_sd_mix = data["RDW"].notna() & (data["RDW"] > 20)
+    for index in data.index[rdw_sd_mix]:
+        error_rows.append({"行号": int(index + 1), "序号": data.loc[index, "序号"], "来源": data.loc[index, "来源"], "变量": "RDW", "原值": data.loc[index, "RDW"], "处理": "剔除整行", "理由": "RDW-CV正常范围11.5-14.5%，值>20%符合RDW-SD(fL)特征，疑似RDW-SD混入RDW-CV列"})
+    error_mask |= rdw_sd_mix
     removed = data.loc[error_mask].copy()
     cleaned = data.loc[~error_mask].copy()
-    cleaning_log.append({"步骤": "4.1 第一层录入错误", "删除行数": int(error_mask.sum()), "修改内容": "剔除包含负值或HB超过200 g/L的整行", "理由": "严格按方案仅剔除明确的录入错误；其他极端值全部保留并标记"})
+    cleaning_log.append({"步骤": "4.1 第一层录入错误", "删除行数": int(error_mask.sum()), "修改内容": f"剔除包含负值或HB超过200 g/L的整行；WBC单位混用修正{int(wbc_unit_fix.sum())}条（除以1000）；RDW-SD混入剔除{int(rdw_sd_mix.sum())}条", "理由": "严格按方案剔除明确的录入错误和超出物理测量范围的值"})
     return cleaned, removed, pd.DataFrame(error_rows)
 
 

@@ -278,6 +278,24 @@ def combination_metrics(data):
     result = pd.DataFrame(rows); result["BH校正p值"] = bh(result["p值"])
     result.to_csv(OUTPUT_DIR / "组合指标评估.csv", index=False, encoding="utf-8-sig")
     data[["序号", "label", "NLR", "MLR", "PLR"]].to_csv(OUTPUT_DIR / "组合指标数据.csv", index=False, encoding="utf-8-sig")
+    # 比值放大诊断：统计L极小值数量及其对组合指标的影响
+    l_vals = data["L"].dropna()
+    l_small = (l_vals < 0.3).sum()
+    l_medium = ((l_vals >= 0.3) & (l_vals < 0.5)).sum()
+    mlr_max = data["MLR"].dropna().max()
+    nlr_max = data["NLR"].dropna().max()
+    pd.DataFrame([{
+        "诊断项": "L极小值(<0.3)样本数", "值": int(l_small),
+    }, {
+        "诊断项": "L偏小(0.3-0.5)样本数", "值": int(l_medium),
+    }, {
+        "诊断项": "MLR最大值", "值": float(mlr_max),
+    }, {
+        "诊断项": "NLR最大值", "值": float(nlr_max),
+    }, {
+        "诊断项": "比值放大说明",
+        "值": f"MLR/NLR/PLR的高AUC部分来自L极小值导致的比值放大效应（L<0.3共{l_small}例），属病例-对照谱系下的预期内虚高，未经独立验证",
+    }]).to_csv(OUTPUT_DIR / "比值放大诊断.csv", index=False, encoding="utf-8-sig")
     return result
 
 
@@ -517,10 +535,16 @@ def write_summary(diff, combo, data):
     score_df.to_csv(OUTPUT_DIR / "聚类K选择.csv", index=False, encoding="utf-8-sig")
     cross_df.to_csv(OUTPUT_DIR / "聚类簇组别交叉表.csv", encoding="utf-8-sig")
     profile_df.to_csv(OUTPUT_DIR / "聚类簇剖面.csv", encoding="utf-8-sig")
+    # 读取预处理阶段的bootstrap CI，输出问题1专用的CI摘要表
+    bootstrap_path = BASE_DIR / "数据预处理结果" / "bootstrap置信区间.csv"
+    if bootstrap_path.exists():
+        bootstrap_df = pd.read_csv(bootstrap_path)
+        bootstrap_df.to_csv(OUTPUT_DIR / "bootstrap置信区间摘要.csv", index=False, encoding="utf-8-sig")
     with open(OUTPUT_DIR / "运行摘要.txt", "w", encoding="utf-8") as f:
         f.write(f"随机种子={SEED}\n样本量={len(data)}；流感A={int((data.label == 1).sum())}；健康={int((data.label == 0).sum())}\n")
         f.write("本脚本仅进行问题1统计分析，不训练分类器。\n")
         f.write("章节对应：3.1按功能组展开，7为辅视角，8为对照框架。\n")
+        f.write("数据修正：WBC单位混用已修正（÷1000），RDW-SD混入已剔除。\n")
 
 
 def main():
