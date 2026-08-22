@@ -19,6 +19,8 @@ HEALTHY_PATH = INPUT_DIR / "Healthy control.xlsx"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 FIGURE_DIR = OUTPUT_DIR / "附图"
 FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+APPENDIX_DIR = OUTPUT_DIR / "附录"
+APPENDIX_DIR.mkdir(parents=True, exist_ok=True)
 
 TARGET_COLUMNS = ["序号", "性别", "年龄", "WBC", "N", "L", "M", "RBC", "HB", "PLT", "RDW"]
 NUMERIC_COLUMNS = ["年龄", "WBC", "N", "L", "M", "RBC", "HB", "PLT", "RDW"]
@@ -290,6 +292,8 @@ def main():
     cleaning_log.append({"步骤": "1.6 重复检查", "删除行数": 0, "修改内容": f"流感组组内重复={duplicate_flua.nunique()}，健康组组内重复={duplicate_healthy.nunique()}，跨组重复={len(cross_ids)}", "理由": "先分别检查组内重复，再检查跨组重复；本批数据不默认删除记录"})
 
     raw_merged = pd.concat([flua, healthy], ignore_index=True)
+    raw_merged.to_csv(APPENDIX_DIR / "合并完整表.csv", index=False, encoding="utf-8-sig")
+    cleaning_log.append({"步骤": "2 合并与标签构建", "删除行数": 0, "修改内容": "纵向拼接两份数据，新增label列；输出合并完整表到附录", "理由": "方案步骤2要求输出整理后总表"})
     raw_missing = missing_rate_table(raw_merged)
     raw_missing.to_csv(OUTPUT_DIR / "缺失率统计.csv", index=False, encoding="utf-8-sig")
     raw_merged[TARGET_COLUMNS].isna().to_csv(OUTPUT_DIR / "缺失模式矩阵.csv", index=False, encoding="utf-8-sig")
