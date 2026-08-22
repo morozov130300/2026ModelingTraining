@@ -37,12 +37,15 @@ FUNCTION_GROUPS = {
 }
 GROUP_ORDER = {v: i for i, v in enumerate(FUNCTION_GROUPS)}
 
-# 参考区间仅用于“异常模式”补充视角，不替代具体实验室参考区间。
+# 参考区间来源：WS/T 405-2012《血细胞分析参考区间》（国家卫生健康委员会发布）。
+# 适用人群：中国健康成人，按性别/年龄分层。本脚本使用合并口径（不分层）作为暂定区间。
+# 局限：不同实验室、检测系统、人群可能导致参考区间变化；M 无 WS/T 405-2012 分层数据，沿用文献常用范围。
 REFERENCE_INTERVALS = {
-    "WBC": (4.0, 10.0), "N": (1.8, 6.3), "L": (1.1, 3.2),
+    "WBC": (3.5, 9.5), "N": (1.8, 6.3), "L": (1.1, 3.2),
     "M": (0.1, 0.6), "RBC": (4.3, 5.8), "HB": (120.0, 160.0),
-    "PLT": (125.0, 350.0), "RDW": (11.5, 14.5),
+    "PLT": (125.0, 350.0), "RDW": (11.5, 15.0),
 }
+REFERENCE_SOURCE = "WS/T 405-2012《血细胞分析参考区间》（国家卫生健康委员会发布，基于中国健康人群大规模多中心数据）"
 
 
 def apply_font_rules(fig):
@@ -359,23 +362,25 @@ def reference_abnormal(data):
 
 
 def clustering_analysis(data):
-    cols = [f"{c}_变换后" for c in BLOOD]
+    # 仅用 L/M/N 聚类（最具区分力的三个变量），评估是否值得保留对照框架
+    cols = [f"{c}_变换后" for c in ["L", "M", "N"]]
     x = data[cols].copy()
     x = pd.DataFrame(StandardScaler().fit_transform(x), columns=cols, index=data.index)
     scores = []
     for k in range(2, 7):
         labels = AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(x)
         scores.append({"K": k, "轮廓系数": silhouette_score(x, labels), "模型": "Ward层次聚类"})
-    score_df = pd.DataFrame(scores); score_df.to_csv(OUTPUT_DIR / "聚类K选择.csv", index=False, encoding="utf-8-sig")
+    score_df = pd.DataFrame(scores); score_df.to_csv(OUTPUT_DIR / "聚类K选择_LMN.csv", index=False, encoding="utf-8-sig")
     best_k = int(score_df.loc[score_df["轮廓系数"].idxmax(), "K"])
+    best_silhouette = float(score_df.loc[score_df["轮廓系数"].idxmax(), "轮廓系数"])
     cluster = AgglomerativeClustering(n_clusters=best_k, linkage="ward").fit_predict(x)
     cross = pd.crosstab(cluster, data["label"]).rename(columns={0: "健康组", 1: "流感A组"})
     cross["簇样本数"] = cross.sum(axis=1)
     cross["流感组比例"] = cross["流感A组"] / cross["簇样本数"]
-    cross.to_csv(OUTPUT_DIR / "聚类簇组别交叉表.csv", encoding="utf-8-sig")
+    cross.to_csv(OUTPUT_DIR / "聚类簇组别交叉表_LMN.csv", encoding="utf-8-sig")
     profile = pd.DataFrame(x).assign(簇=cluster).groupby("簇").mean()
-    profile.to_csv(OUTPUT_DIR / "聚类簇剖面.csv", encoding="utf-8-sig")
-    fig, ax = plt.subplots(figsize=(10, 5))
+    profile.to_csv(OUTPUT_DIR / "聚类簇剖面_LMN.csv", encoding="utf-8-sig")
+    fig, ax = plt.subplots(figsize=(7, 5))
     image = ax.imshow(profile.to_numpy(float), cmap="coolwarm", vmin=-2, vmax=2, aspect="auto")
     fig.colorbar(image, ax=ax, label="标准化均值")
     ax.set_xticks(range(len(profile.columns)), profile.columns, rotation=45, ha="right")
@@ -383,9 +388,25 @@ def clustering_analysis(data):
     for i in range(profile.shape[0]):
         for j in range(profile.shape[1]):
             ax.text(j, i, f"{profile.iloc[i, j]:.2f}", ha="center", va="center", fontsize=8)
-    ax.set_title(f"Ward层次聚类簇剖面（K={best_k}）")
+    ax.set_title(f"Ward层次聚类簇剖面（L/M/N，K={best_k}，轮廓系数={best_silhouette:.3f}）")
     fig.tight_layout()
-    save_figure(fig, FIGURE_DIR / "聚类簇剖面.png")
+    save_figure(fig, FIGURE_DIR / "聚类簇剖面_LMN.png")
+    # 同时尝试全变量聚类作为对比
+    all_cols = [f"{c}_变换后" for c in BLOOD]
+    x_all = pd.DataFrame(StandardScaler().fit_transform(data[all_cols]), columns=all_cols, index=data.index)
+    all_scores = []
+    for k in range(2, 7):
+        labels = AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(x_all)
+        all_scores.append({"K": k, "轮廓系数": silhouette_score(x_all, labels), "模型": "Ward层次聚类"})
+    all_score_df = pd.DataFrame(all_scores)
+    all_best_silhouette = float(all_score_df.loc[all_score_df["轮廓系数"].idxmax(), "轮廓系数"])
+    # 输出诊断：LMN聚类 vs 全变量聚类的轮廓系数对比
+    pd.DataFrame([
+        {"方案": "L/M/N三变量聚类", "最佳K": best_k, "最佳轮廓系数": best_silhouette},
+        {"方案": "全变量聚类", "最佳K": int(all_score_df.loc[all_score_df["轮廓系数"].idxmax(), "K"]), "最佳轮廓系数": all_best_silhouette},
+        {"方案": "判定", "最佳K": "", "最佳轮廓系数": 1 if best_silhouette >= 0.25 else 0,
+         "说明": "轮廓系数≥0.25保留对照框架；<0.25建议删除第8节"},
+    ]).to_csv(OUTPUT_DIR / "聚类方案对比.csv", index=False, encoding="utf-8-sig")
 
 
 def _group_summary_rows(diff, combo, descriptive, data):
@@ -500,8 +521,8 @@ def _reference_abnormal_summary(data):
 
 
 def _clustering_summary(data):
-    """按方案 9.1-9.5 生成对照框架摘要。"""
-    cols = [f"{c}_变换后" for c in BLOOD]
+    """按方案 9.1-9.5 生成对照框架摘要（仅用 L/M/N）。"""
+    cols = [f"{c}_变换后" for c in ["L", "M", "N"]]
     x = pd.DataFrame(StandardScaler().fit_transform(data[cols]), columns=cols, index=data.index)
     scores = []
     for k in range(2, 7):
@@ -509,12 +530,13 @@ def _clustering_summary(data):
         scores.append({"K": k, "轮廓系数": float(silhouette_score(x, labels)), "模型": "Ward层次聚类"})
     score_df = pd.DataFrame(scores)
     best_k = int(score_df.loc[score_df["轮廓系数"].idxmax(), "K"])
+    best_silhouette = float(score_df.loc[score_df["轮廓系数"].idxmax(), "轮廓系数"])
     cluster = AgglomerativeClustering(n_clusters=best_k, linkage="ward").fit_predict(x)
     cross = pd.crosstab(cluster, data["label"]).rename(columns={0: "健康组", 1: "流感A组"})
     cross["簇样本数"] = cross.sum(axis=1)
     cross["流感组比例"] = cross["流感A组"] / cross["簇样本数"]
     profile = pd.DataFrame(x).assign(簇=cluster).groupby("簇").mean()
-    return score_df, cross, profile, best_k
+    return score_df, cross, profile, best_k, best_silhouette
 
 
 def write_summary(diff, combo, data):
@@ -531,10 +553,10 @@ def write_summary(diff, combo, data):
     abnormal_df.to_csv(OUTPUT_DIR / "参考区间异常比例.csv", index=False, encoding="utf-8-sig")
     count_df.to_csv(OUTPUT_DIR / "异常计数比较.csv", index=False, encoding="utf-8-sig")
     pattern_df.to_csv(OUTPUT_DIR / "异常模式频次.csv", encoding="utf-8-sig")
-    score_df, cross_df, profile_df, best_k = _clustering_summary(data)
-    score_df.to_csv(OUTPUT_DIR / "聚类K选择.csv", index=False, encoding="utf-8-sig")
-    cross_df.to_csv(OUTPUT_DIR / "聚类簇组别交叉表.csv", encoding="utf-8-sig")
-    profile_df.to_csv(OUTPUT_DIR / "聚类簇剖面.csv", encoding="utf-8-sig")
+    score_df, cross_df, profile_df, best_k, best_silhouette = _clustering_summary(data)
+    score_df.to_csv(OUTPUT_DIR / "聚类K选择_LMN.csv", index=False, encoding="utf-8-sig")
+    cross_df.to_csv(OUTPUT_DIR / "聚类簇组别交叉表_LMN.csv", encoding="utf-8-sig")
+    profile_df.to_csv(OUTPUT_DIR / "聚类簇剖面_LMN.csv", encoding="utf-8-sig")
     # 读取预处理阶段的bootstrap CI，输出问题1专用的CI摘要表
     bootstrap_path = BASE_DIR / "数据预处理结果" / "bootstrap置信区间.csv"
     if bootstrap_path.exists():
