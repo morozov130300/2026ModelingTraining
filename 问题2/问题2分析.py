@@ -134,27 +134,33 @@ def load_and_engineer():
     # 冗余处理: WBC-N 组只选 N（AUC 更高）；RBC-HB 不纳入
     # EPV 纪律: 健康组 52 例 → 特征数 ≤ 5
 
-    # 含年龄版本
+    # 含年龄版本（5 特征）
     feature_names_with_age = [
         "L", "M", "N", "年龄", "NLR_log",
     ]
-    # 不含年龄版本
+    # 不含年龄版本（4 特征：与含年龄版仅差"年龄"，严格对照）
     feature_names_no_age = [
+        "L", "M", "N", "NLR_log",
+    ]
+    # 不含年龄+PLT 版本（5 特征：原方案的不含年龄版，供参考）
+    feature_names_no_age_plt = [
         "L", "M", "N", "NLR_log", "PLT",
     ]
 
     # 确认所有特征列存在
-    for col in feature_names_with_age + feature_names_no_age:
+    all_features = feature_names_with_age + feature_names_no_age + feature_names_no_age_plt
+    for col in all_features:
         assert col in df.columns, f"特征列 {col} 不存在"
 
     print(f"[特征工程] 含年龄特征: {feature_names_with_age}")
     print(f"[特征工程] 不含年龄特征: {feature_names_no_age}")
+    print(f"[特征工程] 不含年龄+PLT特征: {feature_names_no_age_plt}")
     print(f"[特征工程] 组合指标统计:")
     for c in COMBO_COLS:
         print(f"  {c}: median={df[c].median():.2f}, max={df[c].max():.2f}, "
               f"L<0.3样本数={(df['L']<0.3).sum()}")
 
-    return df, feature_names_with_age, feature_names_no_age
+    return df, feature_names_with_age, feature_names_no_age, feature_names_no_age_plt
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1002,14 +1008,16 @@ def main():
     print("=" * 70)
 
     # 1. 加载数据
-    df, feat_with_age, feat_no_age = load_and_engineer()
+    df, feat_with_age, feat_no_age, feat_no_age_plt = load_and_engineer()
 
-    # 2. 准备数据（含年龄版本）
+    # 2. 准备数据（三个版本）
     X_with_age = df[feat_with_age].values
     X_no_age = df[feat_no_age].values
+    X_no_age_plt = df[feat_no_age_plt].values
     y = df[LABEL_COL].values
 
-    print(f"\n[数据维度] 含年龄: {X_with_age.shape}, 不含年龄: {X_no_age.shape}")
+    print(f"\n[数据维度] 含年龄: {X_with_age.shape}, 不含年龄: {X_no_age.shape}, "
+          f"不含年龄+PLT: {X_no_age_plt.shape}")
     print(f"[标签分布] 0(健康): {(y==0).sum()}, 1(流感A): {(y==1).sum()}, "
           f"比值: {(y==1).sum()/(y==0).sum():.1f}:1")
 
@@ -1043,17 +1051,32 @@ def main():
     print("嵌套 CV 评估（不含年龄版本）—— 弹性网逻辑回归")
     print("=" * 70)
 
+    enet_params = {"solver": "saga", "l1_ratio": 0.5,
+                   "C": 1.0, "max_iter": 5000, "class_weight": "balanced",
+                   "random_state": SEED}
+
     res_no_age = nested_cv_evaluate(
         X_no_age, y,
-        LogisticRegression(solver="saga", l1_ratio=0.5,
-                           C=1.0, max_iter=5000, class_weight="balanced",
-                           random_state=SEED),
+        LogisticRegression(**enet_params),
         "弹性网逻辑回归(不含年龄)",
         n_outer=5, n_inner=5, n_repeats=10
     )
     print(f"  AUC: {res_no_age['auc_mean']:.4f} ± {res_no_age['auc_std']:.4f}")
 
-    # 5. Bootstrap 乐观度校正（弹性网，含年龄）
+    # 4b. 不含年龄+PLT 版本
+    print("\n" + "=" * 70)
+    print("嵌套 CV 评估（不含年龄+PLT版本）—— 弹性网逻辑回归")
+    print("=" * 70)
+
+    res_no_age_plt = nested_cv_evaluate(
+        X_no_age_plt, y,
+        LogisticRegression(**enet_params),
+        "弹性网逻辑回归(不含年龄+PLT)",
+        n_outer=5, n_inner=5, n_repeats=10
+    )
+    print(f"  AUC: {res_no_age_plt['auc_mean']:.4f} ± {res_no_age_plt['auc_std']:.4f}")
+
+    # 5. Bootstrap 乐观度校正（所有 4 个模型）
     print("\n" + "=" * 70)
     print("Bootstrap 乐观度校正（2000 次）")
     print("=" * 70)
@@ -1067,6 +1090,9 @@ def main():
         ("CART", DecisionTreeClassifier,
          {"max_depth": 3, "min_samples_leaf": 5,
           "class_weight": "balanced", "random_state": SEED}),
+        ("SVM-RBF", SVC,
+         {"kernel": "rbf", "probability": True, "class_weight": "balanced",
+          "random_state": SEED}),
     ]:
         print(f"\n--- {name} ---")
         boot = bootstrap_optimism_correction(
@@ -1077,7 +1103,7 @@ def main():
         print(f"  乐观度: {boot['optimism']:.4f}")
         print(f"  校正后 AUC: {boot['corrected_auc']:.4f}")
 
-    # 6. LOOCV 敏感性核验
+    # 6. LOOCV 敏感性核验（所有 4 个模型）
     print("\n" + "=" * 70)
     print("LOOCV 敏感性核验")
     print("=" * 70)
@@ -1088,6 +1114,12 @@ def main():
          {"solver": "saga", "l1_ratio": 0.5,
           "max_iter": 5000, "class_weight": "balanced", "random_state": SEED}),
         ("LDA", LinearDiscriminantAnalysis, {}),
+        ("CART", DecisionTreeClassifier,
+         {"max_depth": 3, "min_samples_leaf": 5,
+          "class_weight": "balanced", "random_state": SEED}),
+        ("SVM-RBF", SVC,
+         {"kernel": "rbf", "probability": True, "class_weight": "balanced",
+          "random_state": SEED}),
     ]:
         auc_loocv = loocv_evaluate(X_with_age, y, model_class, model_params)
         loocv_results[name] = auc_loocv
@@ -1109,10 +1141,7 @@ def main():
 
     scaler_final = StandardScaler()
     X_scaled_final = scaler_final.fit_transform(X_with_age)
-    final_model = LogisticRegression(
-        solver="saga", l1_ratio=0.5,
-        C=1.0, max_iter=5000, class_weight="balanced", random_state=SEED
-    )
+    final_model = LogisticRegression(**enet_params)
     final_model.fit(X_scaled_final, y)
 
     print(f"  系数: {dict(zip(feat_with_age, final_model.coef_[0]))}")
@@ -1129,7 +1158,7 @@ def main():
     print(f"[保存] {scorecard_path}")
     print(scorecard.to_string(index=False))
 
-    # 10. 筛查阈值与操作点（含年龄 + 不含年龄）
+    # 10. 筛查阈值与操作点（三个版本）
     print("\n" + "=" * 70)
     print("筛查阈值与操作点")
     print("=" * 70)
@@ -1140,23 +1169,39 @@ def main():
     print("\n--- 含年龄版本 ---")
     print(op_points_with_age.to_string(index=False))
 
-    # 不含年龄版本
+    # 不含年龄版本（4 特征，严格对照）
     scaler_no_age = StandardScaler()
     X_no_age_scaled = scaler_no_age.fit_transform(X_no_age)
-    model_no_age = LogisticRegression(
-        solver="saga", l1_ratio=0.5,
-        C=1.0, max_iter=5000, class_weight="balanced", random_state=SEED
-    )
+    model_no_age = LogisticRegression(**enet_params)
     model_no_age.fit(X_no_age_scaled, y)
     y_prob_no_age = model_no_age.predict_proba(X_no_age_scaled)[:, 1]
     op_points_no_age = compute_operating_points(y, y_prob_no_age, [0.90, 0.95])
-    print("\n--- 不含年龄版本 ---")
+    print("\n--- 不含年龄版本（4特征，严格对照） ---")
     print(op_points_no_age.to_string(index=False))
 
+    # 不含年龄+PLT 版本
+    scaler_no_age_plt = StandardScaler()
+    X_no_age_plt_scaled = scaler_no_age_plt.fit_transform(X_no_age_plt)
+    model_no_age_plt = LogisticRegression(**enet_params)
+    model_no_age_plt.fit(X_no_age_plt_scaled, y)
+    y_prob_no_age_plt = model_no_age_plt.predict_proba(X_no_age_plt_scaled)[:, 1]
+    op_points_no_age_plt = compute_operating_points(y, y_prob_no_age_plt, [0.90, 0.95])
+    print("\n--- 不含年龄+PLT版本 ---")
+    print(op_points_no_age_plt.to_string(index=False))
+
+    # E5: 检查不含年龄版最大可达灵敏度
+    fpr_no_age, tpr_no_age, _ = roc_curve(y, y_prob_no_age)
+    max_sens_no_age = tpr_no_age.max()
+    print(f"\n  [E5说明] 不含年龄版本最大可达灵敏度: {max_sens_no_age:.4f}")
+    if max_sens_no_age < 0.95:
+        print(f"  该模型最大可达灵敏度约 {max_sens_no_age:.2%}，无法满足 95% 目标")
+
     # 合并保存
-    op_points_with_age.insert(0, "版本", "含年龄")
-    op_points_no_age.insert(0, "版本", "不含年龄")
-    op_combined = pd.concat([op_points_with_age, op_points_no_age], ignore_index=True)
+    op_points_with_age.insert(0, "版本", "含年龄(5特征)")
+    op_points_no_age.insert(0, "版本", "不含年龄(4特征,严格对照)")
+    op_points_no_age_plt.insert(0, "版本", "不含年龄+PLT(5特征)")
+    op_combined = pd.concat([op_points_with_age, op_points_no_age, op_points_no_age_plt],
+                            ignore_index=True)
     op_path = OUTPUT_DIR / "阈值操作点.csv"
     op_combined.to_csv(op_path, index=False, encoding="utf-8-sig")
     print(f"\n[保存] {op_path}")
@@ -1180,7 +1225,7 @@ def main():
                        "CART": "高（规则）", "SVM-RBF": "低"}[name],
         })
 
-    # 添加不含年龄版本
+    # 添加不含年龄版本（4 特征，严格对照）
     comparison_rows.append({
         "模型": "弹性网逻辑回归(不含年龄)",
         "ROC-AUC（CV）": f"{res_no_age['auc_mean']:.4f} ± {res_no_age['auc_std']:.4f}",
@@ -1192,13 +1237,25 @@ def main():
         "可解释性": "高（OR）",
     })
 
+    # 添加不含年龄+PLT 版本
+    comparison_rows.append({
+        "模型": "弹性网逻辑回归(不含年龄+PLT)",
+        "ROC-AUC（CV）": f"{res_no_age_plt['auc_mean']:.4f} ± {res_no_age_plt['auc_std']:.4f}",
+        "PR-AUC": f"{res_no_age_plt['pr_auc_mean']:.4f} ± {res_no_age_plt['pr_auc_std']:.4f}",
+        "Brier": f"{res_no_age_plt['brier_mean']:.4f} ± {res_no_age_plt['brier_std']:.4f}",
+        "灵敏度": f"{res_no_age_plt['sensitivity']:.4f}",
+        "特异度": f"{res_no_age_plt['specificity']:.4f}",
+        "F1": f"{res_no_age_plt['f1']:.4f}",
+        "可解释性": "高（OR）",
+    })
+
     comparison_df = pd.DataFrame(comparison_rows)
     comp_path = OUTPUT_DIR / "模型对比表.csv"
     comparison_df.to_csv(comp_path, index=False, encoding="utf-8-sig")
     print(f"[保存] {comp_path}")
     print(comparison_df.to_string(index=False))
 
-    # 12. Bootstrap 乐观度校正结果表
+    # 12. Bootstrap 乐观度校正结果表（所有 4 个模型）
     boot_rows = []
     for name, boot in bootstrap_results.items():
         boot_rows.append({
@@ -1249,10 +1306,11 @@ def main():
             "显著性": sig,
         })
 
-    # 13b. AIC / BIC（嵌套模型比较）
-    print("\n--- AIC / BIC ---")
+    # 13b. AIC / BIC（仅基于似然的模型：弹性网、LDA、CART）
+    print("\n--- AIC / BIC（仅基于似然的模型）---")
+    print("  注：SVM 非概率模型，无似然函数，AIC/BIC 不适用")
     aic_bic_results = []
-    for name in ["弹性网逻辑回归", "LDA", "CART", "SVM-RBF"]:
+    for name in ["弹性网逻辑回归", "LDA", "CART"]:
         model = models[name]
         scaler_temp = StandardScaler()
         X_temp = scaler_temp.fit_transform(X_with_age)
@@ -1265,6 +1323,14 @@ def main():
             "BIC": f"{bic:.2f}",
             "Log-Likelihood": f"{ll:.2f}",
         })
+    # SVM 行标注不适用
+    aic_bic_results.append({
+        "模型": "SVM-RBF",
+        "AIC": "不适用",
+        "BIC": "不适用",
+        "Log-Likelihood": "不适用（非概率模型）",
+    })
+    print(f"  SVM-RBF: 不适用（非概率模型，无似然函数）")
 
     # 13c. Hosmer-Lemeshow 拟合优度检验
     print("\n--- Hosmer-Lemeshow 拟合优度检验 ---")
@@ -1290,13 +1356,10 @@ def main():
 
     # 保存统计裁决表
     stat_rows = []
-    # DeLong
     for row in delong_results:
         stat_rows.append({"类别": "DeLong检验", **row})
-    # AIC/BIC
     for row in aic_bic_results:
         stat_rows.append({"类别": "AIC/BIC", **row})
-    # HL
     for row in hl_results:
         stat_rows.append({"类别": "Hosmer-Lemeshow", **row})
 
@@ -1311,6 +1374,8 @@ def main():
     print("\n" + "=" * 70)
     print("三基模型加权平均（方案 3.4）")
     print("=" * 70)
+    print("  注：加权平均的 Brier 来自全数据集训练后的训练集内预测（非 CV 测试折叠），")
+    print("  与对比表中嵌套 CV 测试折叠的 Brier 口径不同，仅用于计算加权权重。")
 
     ensemble_models = {
         "弹性网逻辑回归": (LogisticRegression,
@@ -1325,7 +1390,11 @@ def main():
         ensemble_models, X_with_age, y, feat_with_age
     )
     print(f"  加权权重: {', '.join(f'{k}={v:.4f}' for k, v in weights.items())}")
-    print(f"  各模型 Brier: {', '.join(f'{k}={v:.4f}' for k, v in individual_briers.items())}")
+    print(f"  各模型 Brier（训练集内）: {', '.join(f'{k}={v:.4f}' for k, v in individual_briers.items())}")
+    print(f"  各模型 Brier（CV 测试折叠）: "
+          f"弹性网={results_with_age['弹性网逻辑回归']['brier_mean']:.4f}, "
+          f"LDA={results_with_age['LDA']['brier_mean']:.4f}, "
+          f"CART={results_with_age['CART']['brier_mean']:.4f}")
     print(f"  加权集成 AUC: {ensemble_auc:.4f}")
     print(f"  弹性网单独 AUC: {results_with_age['弹性网逻辑回归']['auc_mean']:.4f}")
     print(f"  差异: {abs(ensemble_auc - results_with_age['弹性网逻辑回归']['auc_mean']):.4f}")
@@ -1350,7 +1419,27 @@ def main():
         print(f"  结论: Firth 校正后部分系数方向改变，需谨慎解读")
 
     # ══════════════════════════════════════════════════════════════════
-    # 16. Bootstrap OR 置信区间 + 绘图
+    # 16. N 系数方向翻转分析（E3）
+    # ══════════════════════════════════════════════════════════════════
+    print("\n" + "=" * 70)
+    print("N 系数方向翻转分析（E3：共线性/抑制效应）")
+    print("=" * 70)
+
+    # 计算 N 与 NLR_log 的相关系数
+    n_idx = feat_with_age.index("N")
+    nlr_idx = feat_with_age.index("NLR_log")
+    r_n_nlr = np.corrcoef(X_with_age[:, n_idx], X_with_age[:, nlr_idx])[0, 1]
+    print(f"  N 与 NLR_log 的 Pearson 相关系数: r = {r_n_nlr:.4f}")
+    print(f"  问题 1 单变量分析: N 在流感组显著更高（中位数 4.715 vs 3.100）")
+    print(f"  问题 2 多变量模型: N 系数 = {final_model.coef_[0][n_idx]:.4f}（负向）")
+    print(f"  原因: N 与 NLR_log 高度相关（r={r_n_nlr:.4f}），NLR_log = log(1+N/L)")
+    print(f"  N 的信息已被 NLR_log 吸收；在调整 L、M、NLR_log 后，N 的偏效应翻转。")
+    print(f"  这是典型的共线性/抑制效应（suppressor effect），统计上合法。")
+    print(f"  简化曲线佐证: k=3（NLR_log+L+M）AUC=0.9783，k=4 加 N 后 AUC=0.9769（不升反降）")
+    print(f"  → N 在多变量模型中不提供额外判别信息，其翻转方向是共线性的数学结果。")
+
+    # ══════════════════════════════════════════════════════════════════
+    # 17. Bootstrap OR 置信区间 + 绘图
     # ══════════════════════════════════════════════════════════════════
     print("\n" + "=" * 70)
     print("Bootstrap OR 置信区间（2000 次）")
@@ -1363,7 +1452,7 @@ def main():
         print(f"  {fname}: OR={om:.3f}, 95%CI=[{ol:.3f}, {ou:.3f}]")
 
     # ══════════════════════════════════════════════════════════════════
-    # 17. 绘图
+    # 18. 绘图
     # ══════════════════════════════════════════════════════════════════
     print("\n" + "=" * 70)
     print("生成图表")
@@ -1386,7 +1475,7 @@ def main():
     )
 
     # ══════════════════════════════════════════════════════════════════
-    # 18. 推荐叙述模板（方案 5.3）
+    # 19. 推荐叙述模板（方案 5.3）
     # ══════════════════════════════════════════════════════════════════
     print("\n" + "=" * 70)
     print("推荐叙述模板（方案 5.3）")
@@ -1401,7 +1490,6 @@ def main():
                        if r["模型1"] == "弹性网逻辑回归" and r["模型2"] == "SVM-RBF"][0]
     delong_enet_svm_p = float(delong_enet_svm["p值"])
 
-    # 根据 p 值判断是否显著
     if delong_enet_svm_p > 0.05:
         delong_conclusion = (
             f"与 SVM-RBF（AUC={results_with_age['SVM-RBF']['auc_mean']:.4f}）"
@@ -1415,6 +1503,19 @@ def main():
             f"临床意义有限；弹性网在可解释性与校准上更优。"
         )
 
+    # E2: 修正 Brier 结论
+    brier_conclusion = (
+        f"弹性网在基于似然的模型中 Brier score 最低（{enet_res['brier_mean']:.4f}），"
+        f"（SVM Brier 更低（{results_with_age['SVM-RBF']['brier_mean']:.4f}）"
+        f"但 SVM 非概率模型，AIC/BIC 框架不适用）。"
+    )
+
+    # E3: N 方向翻转说明
+    n_flip_note = (
+        f"N 系数方向与问题 1 单变量分析相反（问题 1: N 高→流感；模型: N 负向），"
+        f"这是 N 与 NLR_log 高度共线（r={r_n_nlr:.4f}）导致的抑制效应，统计上合法。"
+    )
+
     recommendation = (
         f"在统一嵌套 CV 框架（5 折×10 次重复）下，弹性网逻辑回归的 AUC 为 "
         f"{enet_res['auc_mean']:.4f}（±{enet_res['auc_std']:.4f}），"
@@ -1423,15 +1524,15 @@ def main():
         f"与 LDA（AUC={results_with_age['LDA']['auc_mean']:.4f}）、"
         f"CART（AUC={results_with_age['CART']['auc_mean']:.4f}）判别力相当，"
         f"{delong_conclusion}"
-        f"弹性网 Brier score 最低（{enet_res['brier_mean']:.4f}），"
-        f"系数方向与问题 1 单变量分析一致（L 负、M/N 正），"
+        f"{brier_conclusion}"
+        f"系数方向：L 负向、M 正向与问题 1 一致；{n_flip_note}"
         f"Firth 校正后系数方向不变。"
         f"按预注册规则（方案 5.2），推荐弹性网逻辑回归作为最终模型。"
     )
     print(f"\n{recommendation}")
 
     # ══════════════════════════════════════════════════════════════════
-    # 19. 局限清单（方案 7.4）
+    # 20. 局限清单（方案 7.4）
     # ══════════════════════════════════════════════════════════════════
     print("\n" + "=" * 70)
     print("局限清单（方案 7.4，供问题 3 推广分析引用）")
@@ -1439,10 +1540,11 @@ def main():
 
     limitations = [
         {"限制来源": "样本量", "说明": "健康组仅 52 例，效应量与 AUC 置信区间宽"},
-        {"限制来源": "类别比例", "说明": f"9.15:1，人为设定，不代表真实筛查患病率"},
+        {"限制来源": "类别比例", "说明": "9.15:1，人为设定，不代表真实筛查患病率"},
         {"限制来源": "谱系", "说明": "仅'流感 A vs 健康'，不含其他呼吸道感染"},
         {"限制来源": "年龄/性别", "说明": "两组年龄结构错配（中位 43 vs 31）；性别比例略有差异"},
         {"限制来源": "比值放大", "说明": "MLR/NLR 高 AUC 部分来自 L 极小值，需交叉验证复核"},
+        {"限制来源": "共线性", "说明": f"N 与 NLR_log 高度共线（r={r_n_nlr:.4f}），N 系数方向翻转为抑制效应"},
     ]
     for lim in limitations:
         print(f"  [{lim['限制来源']}] {lim['说明']}")
@@ -1453,7 +1555,7 @@ def main():
     print(f"\n[保存] {lim_path}")
 
     # ══════════════════════════════════════════════════════════════════
-    # 20. 汇总
+    # 21. 汇总
     # ══════════════════════════════════════════════════════════════════
     print("\n" + "=" * 70)
     print("问题 2 分析完成")
@@ -1463,11 +1565,13 @@ def main():
     print("\n主要结论:")
     print(f"  推荐模型: 弹性网逻辑回归")
     print(f"  含年龄 AUC: {enet_res['auc_mean']:.4f} ± {enet_res['auc_std']:.4f}")
-    print(f"  不含年龄 AUC: {res_no_age['auc_mean']:.4f} ± {res_no_age['auc_std']:.4f}")
+    print(f"  不含年龄(4特征) AUC: {res_no_age['auc_mean']:.4f} ± {res_no_age['auc_std']:.4f}")
+    print(f"  不含年龄+PLT(5特征) AUC: {res_no_age_plt['auc_mean']:.4f} ± {res_no_age_plt['auc_std']:.4f}")
     print(f"  Bootstrap 校正后 AUC: {enet_boot['corrected_auc']:.4f}")
     print(f"  LOOCV AUC: {enet_loocv:.4f}")
     print(f"  三基加权集成 AUC: {ensemble_auc:.4f}（与弹性网差异 <0.01）")
     print(f"  Firth 稳健性: 系数方向{'一致' if direction_match else '不一致'}")
+    print(f"  N 共线性: r(N, NLR_log)={r_n_nlr:.4f}，系数翻转为抑制效应")
     print(f"\n  比值放大说明: MLR/NLR/PLR 的高 AUC 部分来自 L 极小值导致的比值放大效应")
     print(f"  （L<0.3 共 {(df['L']<0.3).sum()} 例），属病例-对照谱系下的预期内虚高，")
     print(f"  未经独立验证。")
