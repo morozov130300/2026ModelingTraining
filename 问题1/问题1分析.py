@@ -370,15 +370,157 @@ def clustering_analysis(data):
     save_figure(fig, FIGURE_DIR / "聚类簇剖面.png")
 
 
-def write_summary(diff, combo, data):
-    summaries = []
+def _group_summary_rows(diff, combo, descriptive, data):
+    """按方案 3.1/7.3 生成功能组级摘要行。"""
+    combo_lookup = combo.set_index("指标")[["Cliff's delta", "单变量AUC", "AUC强度"]].to_dict("index")
+    rows = []
     for group, cols in FUNCTION_GROUPS.items():
         subset = diff[diff["变量"].isin(cols)]
-        summaries.append({"功能组": group, "组内指标效应量绝对值均值": subset["Cliff's delta"].abs().mean(), "组内单变量AUC强度中位数": subset["AUC强度"].median()})
-    pd.DataFrame(summaries).sort_values("组内单变量AUC强度中位数", ascending=False).to_csv(OUTPUT_DIR / "功能组综合比较.csv", index=False, encoding="utf-8-sig")
+        best = subset.sort_values("AUC强度", ascending=False).iloc[0]
+        rows.append({
+            "功能组": group,
+            "组内指标": ", ".join(cols),
+            "组内指标效应量绝对值均值": float(subset["Cliff's delta"].abs().mean()),
+            "组内单变量AUC强度中位数": float(subset["AUC强度"].median()),
+            "组内最强差异变量": best["变量"],
+            "组内最强差异方向": best["方向"],
+            "组内最强差异AUC强度": float(best["AUC强度"]),
+            "组内最强差异Cliff's delta": float(best["Cliff's delta"]),
+            "组内最强差异全局BH校正p值": float(best["全局BH校正p值"]),
+        })
+    # 免疫组补充组合指标摘要
+    immune = [r for r in rows if r["功能组"] == "免疫防御与感染鉴别"][0]
+    for name in ["NLR", "MLR", "PLR"]:
+        if name in combo_lookup:
+            row = combo_lookup[name]
+            immune[f"{name}Cliff's delta"] = float(row["Cliff's delta"])
+            immune[f"{name}AUC强度"] = float(row["AUC强度"])
+            immune[f"{name}单变量AUC"] = float(row["单变量AUC"])
+    return pd.DataFrame(rows)
+
+
+def _group_level_conclusions(rows):
+    """按方案 7.3 生成功能组层面结论句。"""
+    ordered = rows.sort_values("组内单变量AUC强度中位数", ascending=False)
+    lines = []
+    for _, r in ordered.iterrows():
+        auc = r["组内单变量AUC强度中位数"]
+        delta = r["组内指标效应量绝对值均值"]
+        best_auc = r["组内最强差异AUC强度"]
+        best_p = r["组内最强差异全局BH校正p值"]
+        lines.append(
+            f"{r['功能组']}：组内效应量绝对值均值 {delta:.3f}，"
+            f"组内 AUC 强度中位数 {auc:.3f}，"
+            f"最强差异变量为 {r['组内最强差异变量']}（方向 {r['组内最强差异方向']}，"
+            f"AUC 强度 {best_auc:.3f}，全局 BH 校正 p={best_p:.2e}）。"
+        )
+    return lines
+
+
+def _variable_level_conclusions(diff, combo):
+    """按方案 7.3 生成变量层面结论句。"""
+    lines = []
+    for _, r in diff.sort_values("AUC强度", ascending=False).iterrows():
+        delta = r["Cliff's delta"]
+        auc = r["AUC强度"]
+        p = r["全局BH校正p值"]
+        lines.append(
+            f"{r['变量']}（{r['所属功能组']}）：Cliff's delta={delta:.3f}，"
+            f"AUC 强度={auc:.3f}，全局 BH 校正 p={p:.2e}，方向 {r['方向']}，"
+            f"潜力评级 {r['潜力评级']}。"
+        )
+    for _, r in combo[combo["指标"].isin(["NLR", "MLR", "PLR"])].sort_values("AUC强度", ascending=False).iterrows():
+        delta = r["Cliff's delta"]
+        auc = r["AUC强度"]
+        p = r["BH校正p值"]
+        lines.append(
+            f"{r['指标']}（免疫组合指标）：Cliff's delta={delta:.3f}，"
+            f"AUC 强度={auc:.3f}，全局 BH 校正 p={p:.2e}。"
+        )
+    return lines
+
+
+def _reference_abnormal_summary(data):
+    """按方案 8.1-8.5 生成辅视角摘要表。"""
+    rows, matrix = [], pd.DataFrame(index=data.index)
+    for col, (lower, upper) in REFERENCE_INTERVALS.items():
+        status = np.select([data[col] < lower, data[col] > upper], ["偏低", "偏高"], default="正常")
+        matrix[col] = status
+        for label, name in [(0, "健康组"), (1, "流感A组")]:
+            subset = status[data.label.to_numpy() == label]
+            abnormal = int(np.sum(subset != "正常")); total = int(len(subset))
+            other = status[data.label.to_numpy() != label]
+            other_abnormal = int(np.sum(other != "正常"))
+            contingency = np.array([[abnormal, total - abnormal], [other_abnormal, len(other) - other_abnormal]])
+            try:
+                p = fisher_exact(contingency)[1] if np.min(contingency) < 5 else chi2_contingency(contingency)[1]
+            except ValueError:
+                p = np.nan
+            rows.append({
+                "变量": col, "参考下限": lower, "参考上限": upper, "组": name,
+                "异常数": abnormal, "样本数": total, "异常比例": abnormal / total,
+                "与另一组比较p值": p,
+            })
+    matrix["异常指标数"] = (matrix[BLOOD] != "正常").sum(axis=1)
+    count_rows = []
+    for label, name in [(0, "健康组"), (1, "流感A组")]:
+        count_rows.append({
+            "组": name, "n": int((data.label == label).sum()),
+            "异常指标数中位数": float(matrix.loc[data.label == label, "异常指标数"].median()),
+            "异常指标数IQR": float(iqr(matrix.loc[data.label == label, "异常指标数"])),
+        })
+    x = matrix.loc[data.label == 1, "异常指标数"]
+    y = matrix.loc[data.label == 0, "异常指标数"]
+    u, p = mannwhitneyu(x, y, alternative="two-sided")
+    count_rows.append({"组": "两组比较", "n": "", "异常指标数中位数": float(u), "异常指标数IQR": float(p)})
+    patterns = matrix[BLOOD].apply(lambda row: " + ".join(f"{c}{s[0]}" for c, s in row.items() if s != "正常") or "全部正常", axis=1)
+    pattern_table = pd.crosstab(patterns, data["label"]).rename(columns={0: "健康组", 1: "流感A组"})
+    pattern_table = pattern_table.reindex(columns=["健康组", "流感A组"], fill_value=0)
+    pattern_table["合计"] = pattern_table.sum(axis=1)
+    pattern_table = pattern_table.sort_values("合计", ascending=False).drop(columns="合计")
+    return pd.DataFrame(rows), pd.DataFrame(count_rows), pattern_table.head(20)
+
+
+def _clustering_summary(data):
+    """按方案 9.1-9.5 生成对照框架摘要。"""
+    cols = [f"{c}_变换后" for c in BLOOD]
+    x = pd.DataFrame(StandardScaler().fit_transform(data[cols]), columns=cols, index=data.index)
+    scores = []
+    for k in range(2, 7):
+        labels = AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(x)
+        scores.append({"K": k, "轮廓系数": float(silhouette_score(x, labels)), "模型": "Ward层次聚类"})
+    score_df = pd.DataFrame(scores)
+    best_k = int(score_df.loc[score_df["轮廓系数"].idxmax(), "K"])
+    cluster = AgglomerativeClustering(n_clusters=best_k, linkage="ward").fit_predict(x)
+    cross = pd.crosstab(cluster, data["label"]).rename(columns={0: "健康组", 1: "流感A组"})
+    cross["簇样本数"] = cross.sum(axis=1)
+    cross["流感组比例"] = cross["流感A组"] / cross["簇样本数"]
+    profile = pd.DataFrame(x).assign(簇=cluster).groupby("簇").mean()
+    return score_df, cross, profile, best_k
+
+
+def write_summary(diff, combo, data):
+    descriptive = descriptive_table(data)
+    group_rows = _group_summary_rows(diff, combo, descriptive, data)
+    group_rows.to_csv(OUTPUT_DIR / "功能组综合比较.csv", index=False, encoding="utf-8-sig")
+    pd.DataFrame({"功能组层面结论": _group_level_conclusions(group_rows)}).to_csv(
+        OUTPUT_DIR / "功能组层面结论.csv", index=False, encoding="utf-8-sig"
+    )
+    pd.DataFrame({"变量层面结论": _variable_level_conclusions(diff, combo)}).to_csv(
+        OUTPUT_DIR / "变量层面结论.csv", index=False, encoding="utf-8-sig"
+    )
+    abnormal_df, count_df, pattern_df = _reference_abnormal_summary(data)
+    abnormal_df.to_csv(OUTPUT_DIR / "参考区间异常比例.csv", index=False, encoding="utf-8-sig")
+    count_df.to_csv(OUTPUT_DIR / "异常计数比较.csv", index=False, encoding="utf-8-sig")
+    pattern_df.to_csv(OUTPUT_DIR / "异常模式频次.csv", encoding="utf-8-sig")
+    score_df, cross_df, profile_df, best_k = _clustering_summary(data)
+    score_df.to_csv(OUTPUT_DIR / "聚类K选择.csv", index=False, encoding="utf-8-sig")
+    cross_df.to_csv(OUTPUT_DIR / "聚类簇组别交叉表.csv", encoding="utf-8-sig")
+    profile_df.to_csv(OUTPUT_DIR / "聚类簇剖面.csv", encoding="utf-8-sig")
     with open(OUTPUT_DIR / "运行摘要.txt", "w", encoding="utf-8") as f:
-        f.write(f"随机种子={SEED}\n样本量={len(data)}；流感A={sum(data.label==1)}；健康={sum(data.label==0)}\n")
+        f.write(f"随机种子={SEED}\n样本量={len(data)}；流感A={int((data.label == 1).sum())}；健康={int((data.label == 0).sum())}\n")
         f.write("本脚本仅进行问题1统计分析，不训练分类器。\n")
+        f.write("章节对应：3.1按功能组展开，7为辅视角，8为对照框架。\n")
 
 
 def main():
@@ -401,6 +543,10 @@ def main():
     combo2 = combo[["指标", "BH校正p值", "Cliff's delta", "单变量AUC"]].rename(columns={"指标": "变量", "BH校正p值": "全局BH校正p值"})
     evidence = pd.concat([evidence, combo2.assign(所属功能组="免疫组合指标", 潜力评级="补充")], ignore_index=True)
     evidence.to_csv(OUTPUT_DIR / "综合证据表.csv", index=False, encoding="utf-8-sig")
+    # 按方案 3.1 输出按功能组拆分的差异子表，便于报告逐组展开
+    for group_name, cols in FUNCTION_GROUPS.items():
+        subset = diff[diff["变量"].isin(cols)].copy()
+        subset.to_csv(OUTPUT_DIR / f"差异分析表_{group_name}.csv", index=False, encoding="utf-8-sig")
 
 
 if __name__ == "__main__":
