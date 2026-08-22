@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize
+from matplotlib.font_manager import FontProperties
 from scipy.stats import mannwhitneyu, chi2_contingency, fisher_exact, spearmanr, rankdata, gaussian_kde
 from sklearn.metrics import roc_auc_score, silhouette_score
 from sklearn.preprocessing import StandardScaler
@@ -19,6 +19,12 @@ OUTPUT_DIR = BASE_DIR / "问题1" / "问题1结果"
 FIGURE_DIR = OUTPUT_DIR / "附图"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+
+# 图形字体规范：中文使用微软雅黑，英文和数字使用Times New Roman。
+FONT_CN = FontProperties(family="Microsoft YaHei")
+FONT_EN = FontProperties(family="Times New Roman")
+plt.rcParams["font.family"] = "Microsoft YaHei"
+plt.rcParams["axes.unicode_minus"] = False
 
 AGE = "年龄"
 SEX = "性别"
@@ -37,6 +43,19 @@ REFERENCE_INTERVALS = {
     "M": (0.1, 0.6), "RBC": (4.3, 5.8), "HB": (120.0, 160.0),
     "PLT": (125.0, 350.0), "RDW": (11.5, 14.5),
 }
+
+
+def apply_font_rules(fig):
+    """按文本内容设置字体：含中文使用微软雅黑，纯英文/数字使用Times New Roman。"""
+    for text in fig.findobj(plt.Text):
+        value = text.get_text()
+        text.set_fontproperties(FONT_CN if any("\u4e00" <= char <= "\u9fff" for char in value) else FONT_EN)
+
+
+def save_figure(fig, path):
+    apply_font_rules(fig)
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
 
 
 def read_data():
@@ -184,8 +203,7 @@ def save_distribution_figures(data, descriptive):
             ax.set_xlabel("组别")
         fig.suptitle(f"问题1：{group_name}分布比较")
         fig.tight_layout()
-        fig.savefig(FIGURE_DIR / f"分布_{group_name}.png", dpi=200)
-        plt.close(fig)
+        save_figure(fig, FIGURE_DIR / f"分布_{group_name}.png")
     for col in ["WBC", "N", "L", "M", "PLT"]:
         transform_col = f"{col}_变换后"
         fig, axes = plt.subplots(1, 2, figsize=(10, 4))
@@ -194,15 +212,13 @@ def save_distribution_figures(data, descriptive):
         axes[0].set_title(f"{col}原始刻度")
         axes[1].set_title(f"{col}Box-Cox变换后")
         fig.tight_layout()
-        fig.savefig(FIGURE_DIR / f"变换对比_{col}.png", dpi=200)
-        plt.close(fig)
+        save_figure(fig, FIGURE_DIR / f"变换对比_{col}.png")
     fig, ax = plt.subplots(figsize=(7, 4))
     plot_log_density(ax, data, "NLR")
     ax.set_xscale("log")
     ax.set_title("NLR按组密度图（横轴为log刻度）")
     fig.tight_layout()
-    fig.savefig(FIGURE_DIR / "NLR按组密度图.png", dpi=200)
-    plt.close(fig)
+    save_figure(fig, FIGURE_DIR / "NLR按组密度图.png")
 
 
 def relation_analysis(data):
@@ -221,7 +237,8 @@ def relation_analysis(data):
             value = corr_all.iloc[i, j]
             ax.text(j, i, f"{value:.2f}", ha="center", va="center", fontsize=8)
     ax.set_title("全样本Spearman相关矩阵")
-    fig.tight_layout(); fig.savefig(FIGURE_DIR / "全样本相关热图.png", dpi=200); plt.close(fig)
+    fig.tight_layout()
+    save_figure(fig, FIGURE_DIR / "全样本相关热图.png")
     validation = []
     for pair, hypothesis in [(("RBC", "HB"), "H1/H6氧气运输结构"), (("WBC", "N"), "H6免疫结构")]:
         row = {"指标1": pair[0], "指标2": pair[1], "假设": hypothesis}
@@ -277,14 +294,16 @@ def effect_heatmap(diff):
     for i, value in enumerate(values[:, 0]):
         ax.text(0, i, f"{value:.2f}", ha="center", va="center")
     ax.set_title("效应量热图")
-    fig.tight_layout(); fig.savefig(FIGURE_DIR / "效应量热图.png", dpi=200); plt.close(fig)
+    fig.tight_layout()
+    save_figure(fig, FIGURE_DIR / "效应量热图.png")
     fig, ax = plt.subplots(figsize=(9, 4))
     plot_data = ordered.sort_values("AUC强度", ascending=True)
     colors = plot_data["所属功能组"].map({"基本信息": "#777777", "氧气运输与贫血诊断": "#1b9e77", "免疫防御与感染鉴别": "#d95f02", "凝血与止血": "#7570b3"})
     ax.barh(plot_data["变量"], plot_data["AUC强度"], color=colors)
     ax.axvline(.5, color="black", ls="--", lw=1)
     ax.set_xlim(.5, 1); ax.set_xlabel("AUC强度（方向折叠后）"); ax.set_title("单变量AUC排序")
-    fig.tight_layout(); fig.savefig(FIGURE_DIR / "单变量AUC排序.png", dpi=200); plt.close(fig)
+    fig.tight_layout()
+    save_figure(fig, FIGURE_DIR / "单变量AUC排序.png")
 
 
 def reference_abnormal(data):
@@ -347,7 +366,8 @@ def clustering_analysis(data):
         for j in range(profile.shape[1]):
             ax.text(j, i, f"{profile.iloc[i, j]:.2f}", ha="center", va="center", fontsize=8)
     ax.set_title(f"Ward层次聚类簇剖面（K={best_k}）")
-    fig.tight_layout(); fig.savefig(FIGURE_DIR / "聚类簇剖面.png", dpi=200); plt.close(fig)
+    fig.tight_layout()
+    save_figure(fig, FIGURE_DIR / "聚类簇剖面.png")
 
 
 def write_summary(diff, combo, data):
