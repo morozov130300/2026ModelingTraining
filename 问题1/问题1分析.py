@@ -38,14 +38,18 @@ FUNCTION_GROUPS = {
 GROUP_ORDER = {v: i for i, v in enumerate(FUNCTION_GROUPS)}
 
 # 参考区间来源：WS/T 405-2012《血细胞分析参考区间》（国家卫生健康委员会发布）。
-# 适用人群：中国健康成人，按性别/年龄分层。本脚本使用合并口径（不分层）作为暂定区间。
-# 局限：不同实验室、检测系统、人群可能导致参考区间变化；M 无 WS/T 405-2012 分层数据，沿用文献常用范围。
+# 适用人群：中国健康成人，按性别分层。RBC 和 HB 按性别使用不同区间。
+# 局限：不同实验室检测系统、试剂和人群可能导致参考区间变化。
 REFERENCE_INTERVALS = {
     "WBC": (3.5, 9.5), "N": (1.8, 6.3), "L": (1.1, 3.2),
-    "M": (0.1, 0.6), "RBC": (4.3, 5.8), "HB": (120.0, 160.0),
-    "PLT": (125.0, 350.0), "RDW": (11.5, 15.0),
+    "M": (0.1, 0.6), "PLT": (125.0, 350.0), "RDW": (11.5, 15.0),
 }
-REFERENCE_SOURCE = "WS/T 405-2012《血细胞分析参考区间》（国家卫生健康委员会发布，基于中国健康人群大规模多中心数据）"
+# RBC 和 HB 按性别分层（WS/T 405-2012）
+REFERENCE_INTERVALS_SEX = {
+    "RBC": {"1": (4.3, 5.8), "0": (3.8, 5.1)},  # 男/女
+    "HB": {"1": (130.0, 175.0), "0": (115.0, 150.0)},  # 男/女
+}
+REFERENCE_SOURCE = "WS/T 405-2012《血细胞分析参考区间》（国家卫生健康委员会发布，基于中国健康人群大规模多中心数据，RBC/HB 按性别分层）"
 
 
 def apply_font_rules(fig):
@@ -329,14 +333,13 @@ def effect_heatmap(diff):
 
 def reference_abnormal(data):
     rows, matrix = [], pd.DataFrame(index=data.index)
+    # 不分层指标
     for col, (lower, upper) in REFERENCE_INTERVALS.items():
         status = np.select([data[col] < lower, data[col] > upper], ["偏低", "偏高"], default="正常")
         matrix[col] = status
         for label, name in [(0, "健康组"), (1, "流感A组")]:
             subset = status[data.label.to_numpy() == label]
             abnormal = np.sum(subset != "正常"); total = len(subset)
-            table = np.array([[abnormal, total - abnormal], [0, 0]])
-            # 两组比例比较；小计数时保留Fisher作为备用说明。
             other = status[data.label.to_numpy() != label]
             other_abnormal = np.sum(other != "正常")
             contingency = np.array([[abnormal, total - abnormal], [other_abnormal, len(other) - other_abnormal]])
@@ -344,7 +347,27 @@ def reference_abnormal(data):
                 try: p = fisher_exact(contingency)[1] if np.min(contingency) < 5 else chi2_contingency(contingency)[1]
                 except ValueError: p = np.nan
             else: p = np.nan
-            rows.append({"变量": col, "参考下限": lower, "参考上限": upper, "组": name, "异常数": int(abnormal), "样本数": total, "异常比例": abnormal / total, "与另一组比较p值": p})
+            rows.append({"变量": col, "参考下限": lower, "参考上限": upper, "分层": "不分层", "组": name, "异常数": int(abnormal), "样本数": total, "异常比例": abnormal / total, "与另一组比较p值": p})
+    # 按性别分层指标（RBC、HB）
+    for col, sex_intervals in REFERENCE_INTERVALS_SEX.items():
+        status = pd.Series("正常", index=data.index)
+        for sex_val, (lower, upper) in sex_intervals.items():
+            sex_mask = data[SEX].astype(str) == sex_val
+            vals = data.loc[sex_mask, col]
+            status.loc[sex_mask & (vals < lower)] = "偏低"
+            status.loc[sex_mask & (vals > upper)] = "偏高"
+        matrix[col] = status
+        for label, name in [(0, "健康组"), (1, "流感A组")]:
+            subset = status[data.label.to_numpy() == label]
+            abnormal = np.sum(subset != "正常"); total = len(subset)
+            other = status[data.label.to_numpy() != label]
+            other_abnormal = np.sum(other != "正常")
+            contingency = np.array([[abnormal, total - abnormal], [other_abnormal, len(other) - other_abnormal]])
+            if np.all(contingency >= 0):
+                try: p = fisher_exact(contingency)[1] if np.min(contingency) < 5 else chi2_contingency(contingency)[1]
+                except ValueError: p = np.nan
+            else: p = np.nan
+            rows.append({"变量": col, "参考下限": f"男{sex_intervals['1'][0]}-女{sex_intervals['0'][0]}", "参考上限": f"男{sex_intervals['1'][1]}-女{sex_intervals['0'][1]}", "分层": "按性别", "组": name, "异常数": int(abnormal), "样本数": total, "异常比例": abnormal / total, "与另一组比较p值": p})
     matrix["异常指标数"] = (matrix[BLOOD] != "正常").sum(axis=1)
     count_rows = []
     for label, name in [(0, "健康组"), (1, "流感A组")]:
@@ -480,8 +503,9 @@ def _variable_level_conclusions(diff, combo):
 
 
 def _reference_abnormal_summary(data):
-    """按方案 8.1-8.5 生成辅视角摘要表。"""
+    """按方案 8.1-8.5 生成辅视角摘要表（RBC/HB 按性别分层）。"""
     rows, matrix = [], pd.DataFrame(index=data.index)
+    # 不分层指标
     for col, (lower, upper) in REFERENCE_INTERVALS.items():
         status = np.select([data[col] < lower, data[col] > upper], ["偏低", "偏高"], default="正常")
         matrix[col] = status
@@ -496,8 +520,33 @@ def _reference_abnormal_summary(data):
             except ValueError:
                 p = np.nan
             rows.append({
-                "变量": col, "参考下限": lower, "参考上限": upper, "组": name,
-                "异常数": abnormal, "样本数": total, "异常比例": abnormal / total,
+                "变量": col, "参考下限": lower, "参考上限": upper, "分层": "不分层",
+                "组": name, "异常数": abnormal, "样本数": total, "异常比例": abnormal / total,
+                "与另一组比较p值": p,
+            })
+    # 按性别分层指标（RBC、HB）
+    for col, sex_intervals in REFERENCE_INTERVALS_SEX.items():
+        status = pd.Series("正常", index=data.index)
+        for sex_val, (lower, upper) in sex_intervals.items():
+            sex_mask = data[SEX].astype(str) == sex_val
+            vals = data.loc[sex_mask, col]
+            status.loc[sex_mask & (vals < lower)] = "偏低"
+            status.loc[sex_mask & (vals > upper)] = "偏高"
+        matrix[col] = status
+        for label, name in [(0, "健康组"), (1, "流感A组")]:
+            subset = status[data.label.to_numpy() == label]
+            abnormal = int(np.sum(subset != "正常")); total = int(len(subset))
+            other = status[data.label.to_numpy() != label]
+            other_abnormal = int(np.sum(other != "正常"))
+            contingency = np.array([[abnormal, total - abnormal], [other_abnormal, len(other) - other_abnormal]])
+            try:
+                p = fisher_exact(contingency)[1] if np.min(contingency) < 5 else chi2_contingency(contingency)[1]
+            except ValueError:
+                p = np.nan
+            rows.append({
+                "变量": col, "参考下限": f"男{sex_intervals['1'][0]}-女{sex_intervals['0'][0]}",
+                "参考上限": f"男{sex_intervals['1'][1]}-女{sex_intervals['0'][1]}", "分层": "按性别",
+                "组": name, "异常数": abnormal, "样本数": total, "异常比例": abnormal / total,
                 "与另一组比较p值": p,
             })
     matrix["异常指标数"] = (matrix[BLOOD] != "正常").sum(axis=1)
