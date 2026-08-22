@@ -771,7 +771,7 @@ def build_scorecard(model, feature_names, X_raw, y, scaler=None):
     scorecard_rows = []
     for i, fname in enumerate(feature_names):
         coef = coefs[i]
-        # 分箱：按分位数 3 档
+        # 分箱：按分位数 3 档（在原始尺度上分箱，保持可解释性）
         x_col = X_raw[:, i]
         try:
             bins = np.percentile(x_col, [33.3, 66.7])
@@ -787,10 +787,11 @@ def build_scorecard(model, feature_names, X_raw, y, scaler=None):
             mask = x_binned == b
             if mask.sum() > 0:
                 bin_mean_prob = y[mask].mean()
-                # 整数分：系数 × (bin_center - overall_mean) × scaling_factor
-                bin_center = x_col[mask].mean()
-                overall_mean = x_col.mean()
-                raw_score = coef * (bin_center - overall_mean)
+                # 原始分：系数 × (标准化后箱均值 - 标准化后总体均值)
+                # 使用标准化后数据确保系数与特征尺度一致
+                bin_center_scaled = X_scaled[mask, i].mean()
+                overall_mean_scaled = X_scaled[:, i].mean()
+                raw_score = coef * (bin_center_scaled - overall_mean_scaled)
                 scorecard_rows.append({
                     "变量": fname,
                     "分箱": f"档{b+1}",
