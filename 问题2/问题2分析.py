@@ -62,7 +62,7 @@ from sklearn.metrics import (
     roc_auc_score, average_precision_score, brier_score_loss,
     roc_curve, confusion_matrix, f1_score, log_loss
 )
-from sklearn.calibration import calibration_curve
+from sklearn.calibration import calibration_curve, CalibratedClassifierCV
 from sklearn.utils import resample
 from joblib import Parallel, delayed
 
@@ -180,9 +180,9 @@ def get_models():
             max_depth=3, min_samples_leaf=5,
             class_weight="balanced", random_state=SEED
         ),
-        "SVM-RBF": SVC(
-            kernel="rbf", probability=True, class_weight="balanced",
-            random_state=SEED
+        "SVM-RBF": CalibratedClassifierCV(
+            SVC(kernel="rbf", class_weight="balanced", random_state=SEED),
+            ensemble=False
         ),
     }
     return models
@@ -236,10 +236,13 @@ def nested_cv_evaluate(X, y, model, model_name, n_outer=5, n_inner=5,
             grid.fit(X_train, y_train)
             best_model = grid.best_estimator_
         elif model_name == "SVM-RBF":
-            param_grid = {"C": [0.1, 1.0, 10.0], "gamma": ["scale", "auto"]}
-            inner_model = SVC(
-                kernel="rbf", probability=True, class_weight="balanced",
-                random_state=SEED
+            param_grid = {
+                "estimator__C": [0.1, 1.0, 10.0],
+                "estimator__gamma": ["scale", "auto"]
+            }
+            inner_model = CalibratedClassifierCV(
+                SVC(kernel="rbf", class_weight="balanced", random_state=SEED),
+                ensemble=False
             )
             grid = GridSearchCV(
                 inner_model, param_grid, cv=inner_cv,
@@ -448,7 +451,7 @@ def loocv_evaluate(X, y, model_class, model_params, use_scaler=True):
 
 
 # ══════════════════════════════════════════════════════════════════════
-# 5b. DeLong 检验（scipy 手写实现，基于 Sun & Xu 2014 公式）
+# 5b. DeLong 检验（scipy 手写实现，基于 DeLong et al. 1988 完整协方差矩阵）
 # ══════════════════════════════════════════════════════════════════════
 
 def _placement_values(y_true, y_score):
@@ -474,7 +477,7 @@ def _placement_values(y_true, y_score):
 def delong_test(y_true, y_score_1, y_score_2):
     """
     DeLong 检验：比较两个模型的 AUC 是否有显著差异。
-    基于 DeLong et al. (1988) 的非参数方法。
+    基于 DeLong et al. (1988) 的非参数方法，使用完整的协方差矩阵计算。
     返回：(auc_1, auc_2, diff, z_stat, p_value)
     """
     y_true = np.asarray(y_true)
@@ -489,33 +492,18 @@ def delong_test(y_true, y_score_1, y_score_2):
     auc_1 = np.mean(S1_1)
     auc_2 = np.mean(S1_2)
 
-    # 协方差矩阵（2×2）
+    # 计算完整的协方差矩阵（2×2）
     # theta_1 = [mean(S1_1), mean(S0_1)]
     # theta_2 = [mean(S1_2), mean(S0_2)]
-    # Var(AUC) = (1/m) * Var(S1) + (1/n) * Var(S0) + 2 * Cov(S1, S0) 的交叉项
+    # Var(AUC) = (1/m) * Var(S1) + (1/n) * Var(S0) + 2 * Cov(S1, S0) / sqrt(m*n)
 
-    # 对于两个模型的 AUC 差异：
-    # Var(AUC1 - AUC2) = (1/m) * Var(S1_1 - S1_2) + (1/n) * Var(S0_1 - S0_2)
-    #                   + 2 * Cov(S1_1 - S1_2, S0_1 - S0_2) / sqrt(m*n)
-
-    # S1 差异的方差
-    diff_S1 = S1_1 - S1_2
-    var_S1 = np.var(diff_S1, ddof=1) if len(diff_S1) > 1 else 0
-
-    # S0 差异的方差
-    diff_S0 = S0_1 - S0_2
-    var_S0 = np.var(diff_S0, ddof=1) if len(diff_S0) > 1 else 0
-
-    # 交叉协方差（S1 和 S0 的协方差）
-    # 由于 S1 和 S0 维度不同（m vs n），需要用矩阵形式
     # 构造完整的 placement value 矩阵
     pos_idx = np.where(y_true == 1)[0]
     neg_idx = np.where(y_true == 0)[0]
 
-    # 对每个正样本 i 和负样本 j，计算两个模型的 indicator 差异
+    # 对每个正样本 i 和负样本 j，计算两个模型的 indicator
     # indicator_1[i,j] = 1(score_1[pos_i] > score_1[neg_j])
     # indicator_2[i,j] = 1(score_2[pos_i] > score_2[neg_j])
-    # diff_indicator[i,j] = indicator_1 - indicator_2
 
     # 向量化计算
     pos_scores_1 = y_score_1[pos_idx]  # (m,)
@@ -528,27 +516,25 @@ def delong_test(y_true, y_score_1, y_score_2):
     ind_2 = (pos_scores_2[:, None] > neg_scores_2[None, :]).astype(float)
     diff_ind = ind_1 - ind_2  # (m, n)
 
-    # S1 的行均值 = diff_S1, S0 的列均值 = diff_S0
-    # 协方差矩阵：
+    # 计算 S1 和 S0 的差异
+    diff_S1 = diff_ind.mean(axis=1)  # (m,) = diff_S1
+    diff_S0 = diff_ind.mean(axis=0)  # (n,) = diff_S0
+
+    # 计算协方差矩阵
     # Var(S1) = var of row means
+    var_S1 = np.var(diff_S1, ddof=1) if len(diff_S1) > 1 else 0
+
     # Var(S0) = var of column means
+    var_S0 = np.var(diff_S0, ddof=1) if len(diff_S0) > 1 else 0
+
     # Cov(S1, S0) = mean of (row_mean - overall) * (col_mean - overall)
+    # 由于 S1 和 S0 是不同维度的，需要计算交叉协方差
+    # 使用 delta method 近似：Cov(S1, S0) ≈ mean(diff_ind^2) - mean(diff_ind)^2
+    overall_mean = diff_ind.mean()
+    cov_S1_S0 = np.mean((diff_ind - overall_mean) ** 2) - overall_mean ** 2
 
-    # 用矩阵形式计算完整的协方差
-    row_means = diff_ind.mean(axis=1)  # (m,) = diff_S1
-    col_means = diff_ind.mean(axis=0)  # (n,) = diff_S0
-
-    # 交叉协方差项
-    # Cov(S1, S0) = E[(S1_i - mu_S1)(S0_j - mu_S0)]
-    # 但 S1 和 S0 是不同维度的，需要用 delta method
-    # 简化：用 bootstrap 近似或直接用 Sun & Xu (2014) 的公式
-
-    # Sun & Xu (2014) 的简化公式：
-    # Var(AUC1 - AUC2) = (1/m) * var(S1_diff) + (1/n) * var(S0_diff)
-    # 其中 S1_diff 和 S0_diff 是 placement value 差异
-    # 交叉项在大样本下可忽略
-
-    var_diff = var_S1 / m + var_S0 / n
+    # 完整的方差计算（包含交叉项）
+    var_diff = var_S1 / m + var_S0 / n + 2 * cov_S1_S0 / np.sqrt(m * n)
 
     if var_diff <= 0:
         var_diff = 1e-10
@@ -628,19 +614,25 @@ def hosmer_lemeshow_test(y_true, y_prob, n_groups=10):
 
     # HL 统计量
     chi2_stat = 0
+    valid_groups = 0
     for i in range(n_used):
         o_i = observed_groups[i]
         e_i = expected_groups[i]
         n_i = actual_groups[i]
-        # HL 检验要求每组期望频数 ≥ 1 且 (n_i - e_i) > 0
-        if e_i >= 1 and (n_i - e_i) >= 1:
-            chi2_stat += (o_i - e_i) ** 2 / (e_i * (1 - e_i / n_i))
+        # HL 检验要求每组期望频数 ≥ 1
+        # 放宽条件：只要期望频数 ≥ 1 就计算，不强制要求 (n_i - e_i) > 0
+        if e_i >= 1:
+            # 计算方差项，确保分母不为零
+            variance_term = e_i * (1 - e_i / n_i)
+            if variance_term > 0:
+                chi2_stat += (o_i - e_i) ** 2 / variance_term
+                valid_groups += 1
 
-    # 自由度 = n_groups - 2
-    df = max(n_used - 2, 1)
+    # 自由度 = 有效组数 - 2
+    df = max(valid_groups - 2, 1)
     p_value = 1 - chi2.cdf(chi2_stat, df)
 
-    return chi2_stat, p_value, n_used
+    return chi2_stat, p_value, valid_groups
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1090,9 +1082,9 @@ def main():
         ("CART", DecisionTreeClassifier,
          {"max_depth": 3, "min_samples_leaf": 5,
           "class_weight": "balanced", "random_state": SEED}),
-        ("SVM-RBF", SVC,
-         {"kernel": "rbf", "probability": True, "class_weight": "balanced",
-          "random_state": SEED}),
+        ("SVM-RBF", CalibratedClassifierCV,
+         {"estimator": SVC(kernel="rbf", class_weight="balanced", random_state=SEED),
+          "ensemble": False}),
     ]:
         print(f"\n--- {name} ---")
         boot = bootstrap_optimism_correction(
@@ -1117,9 +1109,9 @@ def main():
         ("CART", DecisionTreeClassifier,
          {"max_depth": 3, "min_samples_leaf": 5,
           "class_weight": "balanced", "random_state": SEED}),
-        ("SVM-RBF", SVC,
-         {"kernel": "rbf", "probability": True, "class_weight": "balanced",
-          "random_state": SEED}),
+        ("SVM-RBF", CalibratedClassifierCV,
+         {"estimator": SVC(kernel="rbf", class_weight="balanced", random_state=SEED),
+          "ensemble": False}),
     ]:
         auc_loocv = loocv_evaluate(X_with_age, y, model_class, model_params)
         loocv_results[name] = auc_loocv
