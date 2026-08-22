@@ -314,6 +314,7 @@ def main():
     for column in NUMERIC_COLUMNS:
         values = clean[column].dropna()
         variable_rows.append({"变量": column, "单位": UNITS.get(column, "无"), "类型": VARIABLE_TYPES[column], "最小值": float(values.min()) if len(values) else np.nan, "最大值": float(values.max()) if len(values) else np.nan, "偏度": float(skew(values, bias=False)) if len(values) > 2 else np.nan, "峰度": float(kurtosis(values, bias=False)) if len(values) > 3 else np.nan, "极端值数量": int((suspicious_table["变量"] == column).sum()) if len(suspicious_table) else 0, "可疑值清单": "见可疑值清单.csv"})
+    pd.DataFrame(variable_rows).to_csv(OUTPUT_DIR / "变量体检表.csv", index=False, encoding="utf-8-sig")
     variable_type_rows = [{"变量": column, "类别": VARIABLE_TYPES.get(column, "来源/标签"), "是否预测候选": "否" if column in {"序号", "来源", "label"} else "是"} for column in TARGET_COLUMNS + ["来源", "label"]]
     pd.DataFrame(variable_type_rows).to_csv(OUTPUT_DIR / "变量类型表.csv", index=False, encoding="utf-8-sig")
     cleaning_log.append({"步骤": "6.1 变量分类", "删除行数": 0, "修改内容": "输出基本信息类、血液检测指标类、样本标识、来源和标签分类", "理由": "序号仅作样本标识，不进入预测特征"})
