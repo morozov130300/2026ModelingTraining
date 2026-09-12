@@ -30,7 +30,7 @@ SEASON_OF_MONTH = {
 SEASON_ANGLE_DEG = {"冬": 15, "春": 105, "夏": 195, "秋": 285}   # 四季中心（四个对角）
 SEASON_BOUND_DEG = [60, 150, 240, 330]                    # 季与季之间的分界线（粗）
 
-# 色标：vmax 压到“白天有光照”区间，让夏季饱和到红端、冬季落在灰橙端
+# 色标：vmax 压到“白天有光照”区间，让夏季饱和到红端、冬季落在冷色端
 VMAX_AUTO  = True        # True=按“冬季白天 P90”自动；False=用 VMAX_FIXED
 VMAX_FIXED = 4000.0     # kW，VMAX_AUTO=False 时使用
 DAYLIGHT   = slice(36, 114)   # 白天 06:00–18:50（10 分钟 slot 36..113），用于统计与定 vmax
@@ -94,7 +94,7 @@ if VMAX_AUTO:
     VMAX = float(np.quantile(winter_day, 0.90))
 else:
     VMAX = float(VMAX_FIXED)
-print(f"色标范围：[0, {VMAX:.1f}] kW（{'自动=冬季白天 P90' if VMAX_AUTO else '固定'}）；0 kW=灰端、强光=红端（灰→红平滑过渡）")
+print(f"色标范围：[0, {VMAX:.1f}] kW（{'自动=冬季白天 P90' if VMAX_AUTO else '固定'}）；0 kW=冷端（蓝）、强光=红端（蓝→红彩色过渡）")
 
 # 每季白天典型功率（供报告引用“夏/冬典型峰谷”）
 for sname in ["冬", "春", "夏", "秋"]:
@@ -114,17 +114,17 @@ theta_edges = theta_edges / theta_edges[-1] * 2 * np.pi    # 归一到 [0, 2π]
 inner_radius, outer_radius = 1.5, 3.0
 radius_edges = np.linspace(inner_radius, outer_radius, n_slots + 1)
 
-# ---------- 数据 → 网格 + 灰→红色带（0 kW=灰端，强光=红端，平滑过渡）----------
+# ---------- 数据 → 网格 + 冷→热彩色带（0 kW=冷端蓝，强光=热端红，全程有色相、无灰）----------
 C = values.T                                                # (时段, 天)
-Cm = C                                                     # 不 mask；0 自然落在灰端，与色标图例一致
+Cm = C                                                     # 不 mask；0 落在冷端蓝，与色标图例一致
 
-# 冷灰（无光/微光）→ 暖橙 → 红（强光/夏季峰值）；顶端强制红
+# 冷（深蓝）→ 蓝 → 青 → 黄绿 → 黄 → 橙 → 热（红/深红）；顶端红，无灰
 cmap = LinearSegmentedColormap.from_list(
-    "gray2red_pv",
-    ["#9b9b9b", "#c9c2b8", "#f2c186", "#e8703a", "#c81e1e"],
+    "cold2hot_pv",
+    ["#0b1e6f", "#1e88e5", "#26c6da", "#aeea00", "#ffd600", "#fb8c00", "#e53935", "#b71c1c"],
     N=256,
 )
-cmap.set_bad("#9b9b9b")   # 保险：任何残留 mask 也归到灰端
+cmap.set_bad("#0b1e6f")   # 保险：任何残留 mask 也归到冷端蓝（非灰）
 norm = Normalize(vmin=0.0, vmax=VMAX)
 
 
@@ -163,19 +163,19 @@ for name, deg in SEASON_ANGLE_DEG.items():    # 四季大标签（外）
     a = np.deg2rad(deg)
     ax.text(a, outer_radius + 0.42, name,
             ha="center", va="center",
-            fontsize=27, fontweight="bold", color="#222222", bbox=lb_box)
+            fontsize=27, fontweight="bold", color="#000000", bbox=lb_box)
 for m in range(1, 13):                        # 月份小标签（内）
     a = np.deg2rad((m - 0.5) * 30)
     ax.text(a, outer_radius + 0.16, str(m),
             ha="center", va="center",
-            fontsize=12, color="#555555", bbox=lb_box)
+            fontsize=12, color="#000000", bbox=lb_box)
 
 
 # ---------- 日内时间刻度 ----------
 hours = np.array([0, 6, 12, 18, 24])
 time_radii = inner_radius + hours / 24 * (outer_radius - inner_radius)
 ax.set_yticks(time_radii)
-ax.set_yticklabels([f"{h:02d}:00" for h in hours], fontsize=13.5, color="#333333")
+ax.set_yticklabels([f"{h:02d}:00" for h in hours], fontsize=13.5, color="#000000")
 ax.set_rlabel_position(80)
 
 for label in ax.get_yticklabels():
@@ -200,7 +200,7 @@ colorbar = fig.colorbar(mesh, ax=ax, pad=0.10, shrink=0.72, aspect=28)
 colorbar.set_label("光伏功率（kW）", fontsize=18)
 colorbar.set_ticks(np.linspace(0, VMAX, 6))
 
-ax.legend(handles=[Patch(facecolor="#9b9b9b", label="无光照 / 0 kW（灰端）")],
+ax.legend(handles=[Patch(facecolor="#0b1e6f", label="无光照 / 0 kW（冷端）")],
           loc="lower left", bbox_to_anchor=(-0.05, -0.05), frameon=False)
 
 fig.savefig(OUTPUT, dpi=300, bbox_inches="tight", facecolor="white")    # 图1
@@ -241,13 +241,13 @@ for wd in range(7):
 LVMAX = float(np.quantile(L_hourly.ravel(), 0.90))
 WD_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 print(f"\n[负载图] 数据源：{XLSX} [{load_sheet}]；7×24 格，格 = {YEAR} 全年该星期该小时均值")
-print(f"[负载图] 色标范围：[0, {LVMAX:.1f}] kW（全年负载 P90）；低负载=灰端、高峰=红端")
+print(f"[负载图] 色标范围：[0, {LVMAX:.1f}] kW（全年负载 P90）；低负载=冷端（蓝）、高峰=红端（蓝→红彩色过渡）")
 for wd, wdn in enumerate(WD_NAMES):
     print(f"    {wdn}：日均 {load_avg[wd].mean():.1f} kW / 峰值 {load_avg[wd].max():.1f} kW")
 
-cmap2 = LinearSegmentedColormap.from_list("gray2red_load",
-    ["#9b9b9b", "#c9c2b8", "#f2c186", "#e8703a", "#c81e1e"], N=256)
-cmap2.set_bad("#9b9b9b")
+cmap2 = LinearSegmentedColormap.from_list("cold2hot_load",
+    ["#0b1e6f", "#1e88e5", "#26c6da", "#aeea00", "#ffd600", "#fb8c00", "#e53935", "#b71c1c"], N=256)
+cmap2.set_bad("#0b1e6f")
 
 fig2, ax2 = plt.subplots(figsize=(12, 7.5), layout="constrained")
 im2 = ax2.imshow(load_avg, cmap=cmap2, norm=Normalize(0.0, LVMAX),
@@ -267,7 +267,7 @@ cbar2.ax.tick_params(labelsize=15)
 # 节假日标注（图下方一行，说明这些天已并入对应星期均值、未单独剔除）
 hol_line = f"2025 法定节假日（已并入对应星期均值，未剔除）：{HOLIDAYS_2025}"
 fig2.text(0.5, -0.03, hol_line, transform=fig2.transFigure,
-          ha="center", va="top", fontsize=15, color="#444444")
+          ha="center", va="top", fontsize=15, color="#000000")
 
 fig2.savefig(OUTPUT2, dpi=300, bbox_inches="tight", facecolor="white")   # 图2
 
