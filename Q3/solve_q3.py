@@ -1227,9 +1227,9 @@ def mae_common_analysis(ctx, records):
       I_k^MAE = (MAE_{(k-1)→window} - MAE_{k→window}) / MAE_{(k-1)→window}
 
     与 ΔC_k = C(S_{k-1}) - C(S_k) 联合分析，回答：
-      ① 预测精度提高是否转化为经济收益；
-      ② 精度提高多少以后才值得支付调整费用；
-      ③ 哪个更新时刻的信息利用率最高。"""
+      ① 预测精度提高是否转化为经济收益（逐天 corr(ΔMAE,δ) Pearson/Spearman）；
+      ② 精度提高多少以后才值得支付调整费用（盈亏平衡临界改善 ΔMAE* 与临界改善率 I*）；
+      ③ 哪个更新时刻的信息利用率最高（单位 MAE 改善年收益 + 收益/调整费覆盖倍数）。"""
     D = len(records)
     G = ctx['G']
     date_idx = ctx['date_idx']
