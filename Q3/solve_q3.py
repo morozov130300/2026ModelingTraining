@@ -1212,6 +1212,136 @@ def verify_analysis(records):
     print("=" * 72)
 
 
+def mae_common_analysis(ctx, records):
+    """共同窗口 MAE 精度改善率与边际收益联合分析（纯统计，不重解 MILP、
+    不改变任何 MPC 目标/约束/执行模型，结果仅终端打印）。
+
+    核心思想：不同时刻的预报预测窗口长度不同（0:00 预报覆盖 0:00-24:00 共 24h，
+    6:00 预报只覆盖 6:00-24:00 共 18h，12:00 只 12h，18:00 只 6h），
+    不能直接比较各自全窗口 MAE。应在共同剩余窗口上比较：
+      评价 6:00 更新：0:00 与 6:00 预报在 [6:00, 24:00] 的 MAE
+      评价 12:00 更新：0:00、6:00、12:00 预报在 [12:00, 24:00] 的 MAE
+      评价 18:00 更新：四次预报在 [18:00, 24:00] 的 MAE
+
+    精度改善率（相邻时刻）：
+      I_k^MAE = (MAE_{(k-1)→window} - MAE_{k→window}) / MAE_{(k-1)→window}
+
+    与 ΔC_k = C(S_{k-1}) - C(S_k) 联合分析，回答：
+      ① 预测精度提高是否转化为经济收益；
+      ② 精度提高多少以后才值得支付调整费用；
+      ③ 哪个更新时刻的信息利用率最高。"""
+    D = len(records)
+    G = ctx['G']
+    date_idx = ctx['date_idx']
+    t_label = {1: '6:00', 2: '12:00', 3: '18:00'}
+
+    # 各天共同窗口 MAE 矩阵
+    # mae_all[k] shape (D, k+1)：第 k 次更新的共同窗口上，j=0..k 时刻预报的 MAE
+    mae_all = {k: np.empty((D, k + 1)) for k in (1, 2, 3)}
+
+    for idx, rec in enumerate(records):
+        di = date_idx[rec['date']]
+        Gd = G[di]
+        # 预计算 4 次 pv_curve（纯插值，极轻量）
+        preds = [pv_curve(ctx, di, j) for j in range(4)]
+        # preds[0]: 144 值（全局 [0,144)）, preds[1]: 108 值（全局 [36,144)）
+        # preds[2]: 72 值（全局 [72,144)）, preds[3]: 36 值（全局 [108,144)）
+
+        for k in (1, 2, 3):
+            i0 = TAU[k]  # 36, 72, 108
+            window_actual = Gd[i0:]  # 共同窗口上的实际值
+            for j in range(k + 1):
+                offset = i0 - TAU[j]  # j 时刻预报在全局 [TAU[j],144) 中的局部起点
+                pred_w = preds[j][offset:]
+                mae_all[k][idx, j] = np.mean(np.abs(window_actual - pred_w))
+
+    # 精度改善率（相邻时刻 k-1 → k）
+    I_mae = {}
+    for k in (1, 2, 3):
+        base = mae_all[k][:, k - 1]
+        curr = mae_all[k][:, k]
+        I_mae[k] = np.where(base > 1e-12, (base - curr) / base, 0.0)
+
+    # 边际收益
+    S = [rec['scen'] for rec in records]
+    C_tot = {j: np.array([S[d][j]['C_total'] for d in range(D)]) for j in range(4)}
+    C_adj = {j: np.array([S[d][j]['C_adj'] for d in range(D)]) for j in range(4)}
+
+    print("\n[共同窗口MAE] 精度改善率与边际收益联合分析（%d 天样本）" % D)
+    print("=" * 72)
+
+    for k in (1, 2, 3):
+        i0 = TAU[k]
+        n_win = N - i0
+        print(f"\n  {t_label[k]} 更新 — 共同窗口 [{i0//6}:00, 24:00]（{n_win} 个 10 分钟时段）：")
+
+        # 各时刻在窗口上的 MAE（年均值 + 中位数）
+        for j in range(k + 1):
+            j_label = f"{TAU[j]//6}:00" if j > 0 else "0:00"
+            print(f"    MAE({j_label}→窗口) = {mae_all[k][:, j].mean():.4f} kW（均值）, "
+                  f"{np.median(mae_all[k][:, j]):.4f} kW（中位）")
+
+        # 精度改善率
+        base_mean = mae_all[k][:, k - 1].mean()
+        curr_mean = mae_all[k][:, k].mean()
+        abs_improve = base_mean - curr_mean
+        I_mean = I_mae[k].mean()
+        I_med = np.median(I_mae[k])
+        I_ratio = abs_improve / base_mean if base_mean > 1e-12 else 0.0
+        print(f"    精度改善率 I_{k}^MAE = ({base_mean:.4f} - {curr_mean:.4f}) / {base_mean:.4f}"
+              f" = {I_ratio:.4f}（逐天均值 {I_mean:.4f}，中位数 {I_med:.4f}）")
+
+        # 边际收益
+        dC = C_tot[k - 1].sum() - C_tot[k].sum()
+        dC_adj = C_adj[k].sum() - C_adj[k - 1].sum()
+        print(f"    边际收益 ΔC_{i0//6} = C(S{k-1}) - C(S{k}) = {dC:.4f} 元")
+        print(f"    新增调整费 ΔC^adj = {dC_adj:.4f} 元")
+
+        # 信息利用率指标
+        if abs_improve > 1e-12:
+            benefit_per_kW_day = dC / (abs_improve * D)
+            print(f"    年收益 / 单位 MAE 改善 = {benefit_per_kW_day:.4f} 元/(kW·天)")
+        else:
+            print(f"    年收益 / 单位 MAE 改善：不适用（MAE 改善 ≈ 0）")
+        if dC_adj > 1e-12:
+            coverage = dC / dC_adj
+            print(f"    收益/调整费覆盖倍数 = {coverage:.4f}"
+                  f"{'（净收益为正）' if coverage > 1 else '（调整费超过节省）'}")
+        else:
+            print(f"    调整费增量 ≈ 0，收益/调整费覆盖不适用")
+
+    # 汇总对照表
+    print("\n  [汇总对照表]")
+    print(f"  {'时刻':<6}{'MAE改善(kW)':>12}{'I^MAE(均值)':>12}{'ΔC(元)':>12}"
+          f"{'ΔC^adj(元)':>12}{'收益/调整费':>10}")
+    print("  " + "-" * 64)
+    for k in (1, 2, 3):
+        base_mean = mae_all[k][:, k - 1].mean()
+        curr_mean = mae_all[k][:, k].mean()
+        abs_improve = base_mean - curr_mean
+        I_mean = I_mae[k].mean()
+        dC = C_tot[k - 1].sum() - C_tot[k].sum()
+        dC_adj = C_adj[k].sum() - C_adj[k - 1].sum()
+        coverage = dC / dC_adj if dC_adj > 1e-12 else float('inf')
+        print(f"  {t_label[k]:<6}{abs_improve:>12.4f}{I_mean:>12.4f}"
+              f"{dC:>12.4f}{dC_adj:>12.4f}{coverage:>10.4f}")
+
+    print("\n  [结论指标]")
+    for k in (1, 2, 3):
+        base_mean = mae_all[k][:, k - 1].mean()
+        curr_mean = mae_all[k][:, k].mean()
+        abs_improve = base_mean - curr_mean
+        I_mean = I_mae[k].mean()
+        dC = C_tot[k - 1].sum() - C_tot[k].sum()
+        dC_adj = C_adj[k].sum() - C_adj[k - 1].sum()
+        utilization = dC / dC_adj if dC_adj > 1e-12 else float('inf')
+        worth = "值得" if dC > 0 else "不值得"
+        print(f"  {t_label[k]}: MAE 改善 {abs_improve:.4f} kW（改善率 {I_mean:.4f}）→ "
+              f"净收益 {dC:.4f} 元，{worth}支付调整费 {dC_adj:.4f} 元，"
+              f"信息利用率 {utilization:.4f}")
+    print("=" * 72)
+
+
 # ========== 7. 主流程与并行（AGENTS：8 进程，按天分派，天间独立与串行一致） ==========
 def build_ctx():
     prices = read_prices(PRICE_FILE)
@@ -1326,6 +1456,7 @@ def run_full(ctx, time_limit, resume=True, limit=None, workers=8):
     print_aggregates(records, f"全量{len(records)}天", write_comp=False)
     if len(records) > 4:
         verify_analysis(records)
+        mae_common_analysis(ctx, records)
 
 
 def run_outputs(ctx):
@@ -1347,6 +1478,7 @@ def run_outputs(ctx):
         print_day_detail(by_date[dd])
     print_aggregates(records, f"全量{len(records)}天", write_comp=False)
     verify_analysis(records)
+    mae_common_analysis(ctx, records)
 
 
 def print_aggregates(records, title, write_comp=True):

@@ -29,6 +29,11 @@
  16. 运行方式：无参数运行 = 全量 334 天（默认断点续跑、默认全核并行；
      multiprocessing 按天分派——天与天之间数据独立、每日 SOC 自行闭环，
      并行结果与串行逐日完全一致；每个子进程内仍是单线程确定性 MILP 求解）。
+ 17. 预测质量指标（用户确认口径）：净负荷=L−G、预测=L̂−Ĝ、误差=实际−预测；
+     出 净负荷 MAE/RMSE/nRMSE（nRMSE 基准=mean|实际净负荷|，避免净负荷可为负导致基准不稳），
+     光伏 MBE=mean(Ĝ−G)（正值=系统性高估）与全时段高估率 Σ[Ĝ>G]/(天数×144，
+     夜间 Ĝ>0 而 G=0 亦计入隐性高估）。逐日值写入缓存，终端按 全年/分月/四个代表日
+     三层聚合打印，供报告更新。
 
 模型与文档对应关系：
   - 第3节   预测与场景：pv_forecast / load_forecast / build_scenarios
@@ -520,6 +525,18 @@ def solve_day(ctx, d_idx, time_limit=TIME_LIMIT_DEFAULT):
     mae_g = float(np.mean(np.abs(Gr - Ghat)))
     rmse_l = float(np.sqrt(np.mean((Lr - Lhat) ** 2)))
     rmse_g = float(np.sqrt(np.mean((Gr - Ghat) ** 2)))
+    # ---- 净负荷 (L−G) 预测误差 与 光伏 MBE/高估率（用户确认口径，决策17）----
+    # 净负荷：实际 NL=Lr−Gr，预测 NLhat=Lhat−Ghat（两路点预测相减，误差=实际−预测）
+    NL = Lr - Gr
+    NLhat = Lhat - Ghat
+    NL_err = NL - NLhat
+    mae_nl = float(np.mean(np.abs(NL_err)))
+    rmse_nl = float(np.sqrt(np.mean(NL_err ** 2)))
+    nl_abs_sum = float(np.sum(np.abs(NL)))        # nRMSE 基准分子（mean|实际净负荷|）
+    nl_err_sq_sum = float(np.sum(NL_err ** 2))    # 供全局/分月 RMSE、nRMSE 聚合
+    nrmse_nl = rmse_nl / max(nl_abs_sum / N, 1e-9)
+    mbe_g = float(np.mean(Ghat - Gr))             # 光伏 MBE：正值=系统性高估
+    overest_cnt_g = int(np.sum(Ghat > Gr))         # 全时段高估计数（夜间 Ĝ>0 亦计入）
     t_end = time.perf_counter()
 
     rec = {
@@ -533,6 +550,9 @@ def solve_day(ctx, d_idx, time_limit=TIME_LIMIT_DEFAULT):
         'unused_energy': unused_energy, 'curtail_energy': curtail_energy,
         'throughput': throughput, 'n_segs': len(segs),
         'mae_l': mae_l, 'mae_g': mae_g, 'rmse_l': rmse_l, 'rmse_g': rmse_g,
+        'mae_nl': mae_nl, 'rmse_nl': rmse_nl, 'nrmse_nl': nrmse_nl,
+        'nl_abs_sum': nl_abs_sum, 'nl_err_sq_sum': nl_err_sq_sum,
+        'mbe_g': mbe_g, 'overest_cnt_g': overest_cnt_g,
         'over_dis': over_dis, 'unexec_dis': unexec_dis, 'actual_e145': actual_e145,
         'bal_res': bal_res, 'split_res': split_res,
         'checks': checks, 'plan_sec': t_plan_done - t0, 'total_sec': t_end - t0,
@@ -811,6 +831,61 @@ def print_aggregates(records, title):
     print(f"  信息隔离核验   : 全部 {n} 天'计划锁定早于实际值读取'成立（逐日断言通过）")
 
 
+def print_prediction_quality(records, label):
+    """预测质量指标（决策17，用户确认口径）：净负荷 MAE/RMSE/nRMSE、光伏 MBE/高估率。
+    出 全局聚合 + 分月 + 四个代表日 三层，供终端输出复制进报告。"""
+    if not records:
+        return
+    all_days = len(records) * N
+    # ---- 全局（按所有传入记录聚合）----
+    g_mae_nl = float(np.mean([r['mae_nl'] for r in records]))
+    g_rmse_nl = float(np.sqrt(sum(r['nl_err_sq_sum'] for r in records) / all_days))
+    g_ref_nl = float(sum(r['nl_abs_sum'] for r in records) / all_days)
+    g_nrmse_nl = g_rmse_nl / max(g_ref_nl, 1e-9)
+    g_mbe_g = float(np.mean([r['mbe_g'] for r in records]))
+    g_overest = float(sum(r['overest_cnt_g'] for r in records)) / all_days
+    print(f"\n[预测质量:{label}]（净负荷=L−G，预测=L̂−Ĝ；nRMSE基准=mean|实际净负荷|；"
+          f"MBE=mean(Ĝ−G) 正值=系统性高估；高估率=全时段Σ[Ĝ>G]/{all_days}）")
+    print("=" * 64)
+    print(f"  净负荷 MAE   : {g_mae_nl:.4f} kW")
+    print(f"  净负荷 RMSE  : {g_rmse_nl:.4f} kW")
+    print(f"  净负荷 nRMSE : {g_nrmse_nl:.4f}  （相对 mean|NL|={g_ref_nl:.4f} kW）")
+    print(f"  光伏 MBE     : {g_mbe_g:+.4f} kW（{'系统性高估' if g_mbe_g > 0 else '系统性低估'}）")
+    print(f"  光伏 高估率  : {g_overest:.4%}（{sum(r['overest_cnt_g'] for r in records)}/{all_days} 时段）")
+    print(f"  （对照）负载 MAE {np.mean([r['mae_l'] for r in records]):.4f} kW, "
+          f"光伏 MAE {np.mean([r['mae_g'] for r in records]):.4f} kW")
+    print("=" * 64)
+
+    # ---- 分月 ----
+    by_month = {}
+    for r in records:
+        by_month.setdefault(r['date'].month, []).append(r)
+    print(f"\n[预测质量·分月:{label}]")
+    print("  月份   | 天数 | 净负荷MAE | 净负荷RMSE | 净负荷nRMSE | 光伏MBE   | 光伏高估率")
+    print("  ------ | ---- | -------- | --------- | ---------- | -------- | --------")
+    for m in sorted(by_month):
+        rs = by_month[m]
+        md = len(rs) * N
+        mae_nl = float(np.mean([r['mae_nl'] for r in rs]))
+        rmse_nl = float(np.sqrt(sum(r['nl_err_sq_sum'] for r in rs) / md))
+        ref_nl = float(sum(r['nl_abs_sum'] for r in rs) / md)
+        nrmse_nl = rmse_nl / max(ref_nl, 1e-9)
+        mbe_g = float(np.mean([r['mbe_g'] for r in rs]))
+        overest = float(sum(r['overest_cnt_g'] for r in rs)) / md
+        print(f"  {rs[0]['date'].year}-{m:02d} | {len(rs):>4} | {mae_nl:8.4f} | "
+              f"{rmse_nl:9.4f} | {nrmse_nl:10.4f} | {mbe_g:+8.4f} | {overest:9.4%}")
+
+    # ---- 四个代表日 ----
+    rep = sorted((r for r in records if r['date'] in REP_DAYS), key=lambda r: r['date'])
+    if rep:
+        print(f"\n[预测质量·代表日:{label}]")
+        print("  日期       | 净负荷MAE | 净负荷RMSE | 净负荷nRMSE | 光伏MBE    | 光伏高估率")
+        print("  --------- | -------- | --------- | ---------- | -------- | --------")
+        for r in rep:
+            print(f"  {str(r['date']):>9} | {r['mae_nl']:8.4f} | {r['rmse_nl']:9.4f} | "
+                  f"{r['nrmse_nl']:10.4f} | {r['mbe_g']:+8.4f} | {r['overest_cnt_g'] / N:9.4%}")
+
+
 def print_day_detail(rec):
     d = rec['date']
     ck = rec['checks']
@@ -834,7 +909,10 @@ def print_day_detail(rec):
               f"实际日末储电约 {rec['actual_e145']:.4f} kWh（剩余电量留至次日，计划仍以6000起步）")
     else:
         print("  过放电时段 0 个")
-    print(f"  预测MAE: 负载 {rec['mae_l']:.4f} kW, 光伏 {rec['mae_g']:.4f} kW")
+    print(f"  预测MAE: 负载 {rec['mae_l']:.4f} kW, 光伏 {rec['mae_g']:.4f} kW, "
+          f"净负荷 {rec['mae_nl']:.4f} kW")
+    print(f"  预测RMSE: 净负荷 {rec['rmse_nl']:.4f} kW (nRMSE {rec['nrmse_nl']:.4f}), "
+          f"光伏 MBE {rec['mbe_g']:+.4f} kW (高估率 {rec['overest_cnt_g'] / N:.4%})")
     if rec['segs']:
         seg_str = ', '.join(f"{fmt_min(s)}-{fmt_min(e)}({en:.4f} kWh)" for s, e, en in rec['segs'])
         print(f"  紧急购电段 {rec['n_segs']} 个: {seg_str}")
@@ -905,6 +983,7 @@ def run_repdays(ctx, time_limit):
     write_tables(records_by_date)
     print_markdown_tables(records_by_date)
     print_aggregates(list(records.values()), '4个代表日')
+    print_prediction_quality(list(records.values()), '4个代表日')
     print("\n[提示] 代表日结果未写 result2.xlsx（需全量 334 天后生成）。"
           "确认无误后运行: python solve_q2.py（一键全量，默认断点续跑+全核并行）")
 
@@ -944,6 +1023,8 @@ def run_full(ctx, time_limit, resume=True, limit=None, workers=None):
     for d_idx in idxs:
         d = ctx['dates'][d_idx]
         rec = load_cache(d) if resume else None
+        if rec is not None and 'mae_nl' not in rec:
+            rec = None                      # 旧缓存缺新增预测质量指标，重解
         if rec is not None:
             records.append(rec)
         else:
@@ -962,6 +1043,7 @@ def run_full(ctx, time_limit, resume=True, limit=None, workers=None):
         write_tables(by_date)
         print_markdown_tables(by_date)
     print_aggregates(records, f"全量{len(records)}天")
+    print_prediction_quality(records, f"全量{len(records)}天")
 
 
 def run_outputs(ctx):
@@ -974,12 +1056,15 @@ def run_outputs(ctx):
         rec = load_cache(d)
         if rec is None:
             raise RuntimeError(f"缺少 {d} 的缓存，请先运行 full")
+        if 'mae_nl' not in rec:
+            raise RuntimeError(f"{d} 缓存缺新增预测质量指标，请运行 full（旧缓存会自动重解）")
         records.append(rec)
     write_result2(records)
     by_date = {rec['date']: rec for rec in records}
     write_tables(by_date)
     print_markdown_tables(by_date)
     print_aggregates(records, f"全量{len(records)}天")
+    print_prediction_quality(records, f"全量{len(records)}天")
 
 
 def main():

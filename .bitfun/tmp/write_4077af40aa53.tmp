@@ -1,0 +1,786 @@
+"""
+问题二：日前计划购电与紧急购电策略建模与求解
+===================================================
+严格按《问题二_日前计划购电与紧急购电建模.md》实现：
+
+  1. 第3节 日前预测与不确定性场景：
+     - 光伏：指数加权水平项 + 局部线性趋势，参数 K_G=14, ρ_G=0.9, β=0.5
+     - 负载：同星期指数加权，参数 K_L=4, ρ_L=0.8
+     - 联合误差场景：成对残差，M=20个场景，等概率
+  2. 第5节 两阶段随机 MILP（式1-10）：
+     - 日前变量：B_t, C_t, D_t, E_t, u_t（充放电互斥二元变量）
+     - 场景变量：R_ωt, B_use_ωt, S_ωt, V_ωt, K_ωt
+     - 目标：min 期望总费用 = 计划购电费 + κ×紧急购电费
+  3. 第7节 逐日滚动回测：
+     - 每天0:00仅用历史数据制定计划
+     - 计划锁定后逐时段揭示实际值计算紧急购电
+  4. 第10节 输出：
+     - 按附件5模板写入 result2.xlsx（三个工作表）
+     - 对2025-02-01至2025-12-31共334天逐日输出
+
+用法：
+    python solve_q2.py
+"""
+
+import os
+import sys
+import time
+from datetime import datetime, timedelta
+
+import numpy as np
+import openpyxl
+from openpyxl import load_workbook
+from scipy.optimize import milp, LinearConstraint, Bounds
+
+# ========== 路径 ==========
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+ATTACH_DIR = os.path.join(PROJECT_ROOT, '附件')
+DATA_FILE = os.path.join(ATTACH_DIR, '附件1.xlsx')
+HISTORY_FILE = os.path.join(ATTACH_DIR, '附件2.xlsx')
+TEMPLATE_FILE = os.path.join(ATTACH_DIR, '附件5', 'result2.xlsx')
+OUT_FILE = os.path.join(SCRIPT_DIR, 'result2.xlsx')
+
+# ========== 已知参数（文档第4节） ==========
+DT = 10 / 60                      # Δt = 1/6 h
+KAPPA = 5                         # 紧急购电加价系数 κ
+ETA_CH = 0.9                      # η^ch
+ETA_DIS = 0.9                     # η^dis
+E_MIN, E_MAX = 1200.0, 10800.0    # 储能运行电量边界 (kWh)
+E_INIT = 6000.0                   # E_1 (kWh)
+E_END = 6000.0                    # E_145 (kWh)
+P_CH_MAX = 5000.0                 # 最大充电功率 (kW)
+P_DIS_MAX = 5000.0                # 最大放电功率 (kW)
+# P^buy,max（文档第3节）：题目未提供，保留为参数，暂设无上限
+P_BUY_MAX = np.inf
+
+# ========== 预测参数（文档第3.6节） ==========
+K_G = 14                          # 光伏历史窗口
+RO_G = 0.9                        # 光伏衰减系数
+BETA = 0.5                        # 光伏趋势收缩系数
+K_L = 4                           # 负载同星期样本数
+RO_L = 0.8                        # 负载衰减系数
+M_SCEN = 20                       # 联合预测误差场景数
+
+# ========== 验证参数 ==========
+TAU = 1e-6        # 充放电互斥校验阈值 τ (kW)
+BAL_TOL = 1e-4    # 等式约束校验容差
+
+# ========== 日期范围（文档第10节） ==========
+DATE_START = datetime(2025, 2, 1)
+DATE_END = datetime(2025, 12, 31)
+DAYS = [(DATE_START + timedelta(days=i)).date() for i in range((DATE_END - DATE_START).days + 1)]
+
+
+# ============================================================
+# 第1节：数据读取与预处理
+# ============================================================
+def read_prices(path):
+    """读取附件1的分时电价（144个时段）"""
+    wb = openpyxl.load_workbook(path, read_only=True)
+    ws = wb.active
+    prices = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row[1] is None:
+            continue
+        prices.append(float(row[1]))
+    wb.close()
+    if len(prices) != 144:
+        raise ValueError(f"期望144个时段，实际{len(prices)}个")
+    return np.asarray(prices)
+
+
+def read_history(path):
+    """读取附件2的365天历史数据，返回两个 (365, 144) 矩阵"""
+    wb = openpyxl.load_workbook(path, read_only=True)
+    # 小区负载
+    ws_load = wb['小区负载']
+    loads = []
+    dates_load = []
+    for row in ws_load.iter_rows(min_row=2, values_only=True):
+        if row[0] is None:
+            continue
+        d = row[0].date() if hasattr(row[0], 'date') else row[0]
+        vals = [float(v) if v is not None else 0.0 for v in row[1:145]]
+        dates_load.append(d)
+        loads.append(vals)
+    # 光伏发电实际功率
+    ws_pv = wb['光伏发电实际功率']
+    pvs = []
+    for row in ws_pv.iter_rows(min_row=2, values_only=True):
+        vals = [float(v) if v is not None else 0.0 for v in row[1:145]]
+        pvs.append(vals)
+    wb.close()
+    if len(loads) != 365 or len(pvs) != 365:
+        raise ValueError(f"期望365天数据，实际负载={len(loads)}, 光伏={len(pvs)}")
+    return np.asarray(loads), np.asarray(pvs), dates_load
+
+
+# ============================================================
+# 第2节：日前预测（文档第3.2-3.3节）
+# ============================================================
+def predict_pv(historical_pv, dates_hist, target_date, K_G=K_G, rho_G=RO_G, beta=BETA):
+    """
+    光伏预测：指数加权水平项 + 局部趋势外推（文档第3.2节）
+    
+    historical_pv: (N_days, 144) 历史光伏矩阵
+    dates_hist: 对应日期列表
+    target_date: 待预测日期
+    """
+    # 找到目标日期之前的所有历史日索引
+    idx_map = {d: i for i, d in enumerate(dates_hist)}
+    if target_date not in idx_map:
+        raise ValueError(f"目标日期 {target_date} 不在历史数据中")
+    target_idx = idx_map[target_date]
+    # 只使用 target_date 之前的历史
+    avail_indices = [i for i in range(target_idx) if i < len(historical_pv)]
+    if len(avail_indices) == 0:
+        raise ValueError(f"日期 {target_date} 之前没有历史数据")
+    
+    K = min(K_G, len(avail_indices))
+    # 最近K个历史日（从近到远）
+    recent_indices = avail_indices[-K:]
+    
+    # 指数加权水平项
+    weights = np.array([rho_G ** k for k in range(K)])
+    weights = weights / weights.sum()
+    hist_pv_window = historical_pv[recent_indices]  # (K, 144)
+    tilde_G = hist_pv_window.T @ weights  # (144,)
+    
+    # 指数加权局部线性拟合：G_{d-k,t} ≈ a - b*k
+    k_arr = np.arange(K, dtype=float)  # k=0..K-1（最近为k=0）
+    # 对每个时段t，拟合 a_t, b_t
+    # 最小化 Σ w_k * (G_{d-k,t} - (a - b*k))^2
+    X = np.column_stack([np.ones(K), -k_arr])  # (K, 2)
+    W = np.diag(weights)
+    XTWX = X.T @ W @ X
+    XTWy = np.zeros((2, 144))
+    for t in range(144):
+        y = hist_pv_window[:, t]
+        XTWy[:, t] = X.T @ W @ y
+    coeffs = np.linalg.solve(XTWX, XTWy)  # (2, 144)
+    a_trend = coeffs[0, :]   # 局部水平外推
+    b_trend = coeffs[1, :]   # 局部趋势斜率
+    
+    # 收缩：G_hat = max(0, (1-beta)*tilde_G + beta*a_trend)
+    G_hat = np.maximum(0.0, (1 - beta) * tilde_G + beta * a_trend)
+    return G_hat
+
+
+def predict_load(historical_load, dates_hist, target_date, K_L=K_L, rho_L=RO_L):
+    """
+    负载预测：同星期指数加权（文档第3.3节）
+    
+    historical_load: (N_days, 144) 历史负载矩阵
+    dates_hist: 对应日期列表
+    target_date: 待预测日期
+    """
+    idx_map = {d: i for i, d in enumerate(dates_hist)}
+    if target_date not in idx_map:
+        raise ValueError(f"目标日期 {target_date} 不在历史数据中")
+    target_idx = idx_map[target_date]
+    
+    target_weekday = target_date.weekday()
+    # 找最近K_L个相同星期几的历史日（严格在 target_date 之前）
+    candidates = []
+    for i in range(target_idx - 1, -1, -1):
+        if dates_hist[i].weekday() == target_weekday:
+            candidates.append(i)
+        if len(candidates) >= K_L:
+            break
+    
+    if len(candidates) == 0:
+        raise ValueError(f"日期 {target_date} 之前没有相同星期几的历史数据")
+    
+    K = len(candidates)
+    weights = np.array([rho_L ** k for k in range(K)])
+    weights = weights / weights.sum()
+    hist_load_window = historical_load[candidates]  # (K, 144)
+    L_hat = hist_load_window.T @ weights  # (144,)
+    return L_hat
+
+
+# ============================================================
+# 第3节：联合误差场景生成（文档第3.4节）
+# ============================================================
+def generate_scenarios(L_hist, G_hist, dates_hist, target_date, L_hat, G_hat, M=M_SCEN):
+    """
+    生成负载-光伏联合误差场景（文档第3.4节）
+    
+    L_hist, G_hist: (365, 144) 历史矩阵
+    dates_hist: 日期列表
+    target_date: 待预测日期
+    L_hat, G_hat: 当天预测（144,）
+    M: 场景数
+    """
+    idx_map = {d: i for i, d in enumerate(dates_hist)}
+    target_idx = idx_map[target_date]
+    
+    # 收集所有在 target_date 之前的历史日
+    avail = list(range(target_idx))
+    # 取最近M个
+    selected = avail[-min(M, len(avail)):]
+    
+    # 计算这些历史日的因果预测误差
+    # 对每个历史日h，用其时刻可用数据预测，计算残差
+    eps_L_list = []
+    eps_G_list = []
+    
+    for h in selected:
+        h_date = dates_hist[h]
+        # 对日h的预测：用 h 之前的数据
+        # 暖启动：如果因果预测样本不足，使用可用日均值
+        # 简化：直接用历史日h的预测残差（用滚动方式）
+        # 为简化实现，这里直接用当天已有预测的残差近似
+        # 更精确的实现需要对每个h重新做因果预测
+        # 这里采用：用前M天的均值作为"预测"，然后计算残差
+        
+        # 实际上，根据文档3.4节，应对每个历史日h重新生成因果预测
+        # 但由于这是回测，我们有完整数据，可以用"假如在h日0:00能获得的信息"来预测
+        # 为简化，我们使用h日之前的同星期负载和光伏预测
+        
+        # 暖启动规则（文档3.4）：对2025-02-01起的首批日期，用可用日均值代替
+        if h < 31:  # 1月数据，因果样本不足
+            # 使用可用日均值
+            L_avg = L_hist[:h].mean(axis=0)
+            G_avg = G_hist[:h].mean(axis=0)
+        else:
+            # 用h日之前的同星期负载（K_L=4）
+            L_avg = predict_load(L_hist, dates_hist, h_date, K_L=K_L, rho_L=RO_L)
+            G_avg = predict_pv(G_hist, dates_hist, h_date, K_G=K_G, rho_G=RO_G, beta=BETA)
+        
+        eps_L = L_hist[h] - L_avg
+        eps_G = G_hist[h] - G_avg
+        eps_L_list.append(eps_L)
+        eps_G_list.append(eps_G)
+    
+    eps_L_arr = np.asarray(eps_L_list)  # (n_scenes, 144)
+    eps_G_arr = np.asarray(eps_G_list)  # (n_scenes, 144)
+    
+    n_scenes = eps_L_arr.shape[0]
+    p_omega = np.ones(n_scenes) / n_scenes  # 等概率
+    
+    # 构造场景轨迹：L^ω = max(0, L_hat + eps_L^ω), G^ω = max(0, G_hat + eps_G^ω)
+    L_scenes = np.maximum(0.0, L_hat.reshape(1, -1) + eps_L_arr)  # (n_scenes, 144)
+    G_scenes = np.maximum(0.0, G_hat.reshape(1, -1) + eps_G_arr)  # (n_scenes, 144)
+    
+    return L_scenes, G_scenes, p_omega
+
+
+# ============================================================
+# 第4节：两阶段随机 MILP 模型（文档第5节）
+# ============================================================
+def build_milp_model(N, prices, L_scenes, G_scenes, p_omega, P_buy_max=P_BUY_MAX):
+    """
+    构建两阶段随机 MILP（文档式1-10）
+    
+    变量布局：
+    x = [B(N), C(N), D(N), E(N+1), u(N),   R(N*M), B_use(N*M), S(N*M), V(N*M), K(N*M)]
+         |--日前变量--|   |--场景变量(每个场景5N个)--|
+    
+    其中 M = L_scenes.shape[0]
+    """
+    M = L_scenes.shape[0]
+    
+    # 索引函数
+    def i_B(t): return t
+    def i_C(t): return N + t
+    def i_D(t): return 2 * N + t
+    def i_E(t): return 3 * N + t
+    def i_u(t): return 4 * N + t
+    
+    # 场景变量起始偏移
+    scene_offset = 5 * N + 1  # E有N+1个，u有N个，共5N+1
+    def i_R(omega, t): return scene_offset + omega * (5 * N) + t
+    def i_Buse(omega, t): return scene_offset + omega * (5 * N) + N + t
+    def i_S(omega, t): return scene_offset + omega * (5 * N) + 2 * N + t
+    def i_V(omega, t): return scene_offset + omega * (5 * N) + 3 * N + t
+    def i_K(omega, t): return scene_offset + omega * (5 * N) + 4 * N + t
+    
+    n_vars = scene_offset + M * 5 * N
+    n = n_vars
+    
+    A_eq, b_eq, A_ub, b_ub = [], [], [], []
+    
+    # -------- 目标函数系数 --------
+    c = np.zeros(n)
+    # 计划购电费：Σ c_t * B_t * Δt
+    c[:N] = prices * DT
+    # 紧急购电费：Σ p_ω * κ * c_t * R_ωt * Δt
+    for omega in range(M):
+        for t in range(N):
+            c[i_R(omega, t)] = p_omega[omega] * KAPPA * prices[t] * DT
+    
+    # -------- 日前约束 --------
+    
+    # 约束(2)：0 <= B_t <= P_buy_max
+    for t in range(N):
+        r = np.zeros(n)
+        r[i_B(t)] = 1.0
+        A_ub.append(r); b_ub.append(P_buy_max)
+        r = np.zeros(n)
+        r[i_B(t)] = -1.0
+        A_ub.append(r); b_ub.append(0.0)
+    
+    # 约束(3)：充放电互斥
+    for t in range(N):
+        # P_ch <= P_CH_MAX * u_t
+        r = np.zeros(n)
+        r[i_C(t)] = 1.0
+        r[i_u(t)] = -P_CH_MAX
+        A_ub.append(r); b_ub.append(0.0)
+        # P_dis <= P_DIS_MAX * (1 - u_t) => P_dis + P_DIS_MAX * u_t <= P_DIS_MAX
+        r = np.zeros(n)
+        r[i_D(t)] = 1.0
+        r[i_u(t)] = P_DIS_MAX
+        A_ub.append(r); b_ub.append(P_DIS_MAX)
+    
+    # 约束(4)：储能状态转移 E_{t+1} = E_t + η_ch*C_t*Δt - D_t*Δt/η_dis
+    for t in range(N):
+        r = np.zeros(n)
+        r[i_E(t + 1)] = 1.0
+        r[i_E(t)] = -1.0
+        r[i_C(t)] = -ETA_CH * DT
+        r[i_D(t)] = DT / ETA_DIS
+        A_eq.append(r); b_eq.append(0.0)
+    
+    # 约束(5)：SOC边界（用不等式约束）
+    for t in range(N + 1):
+        r = np.zeros(n)
+        r[i_E(t)] = 1.0
+        A_ub.append(r); b_ub.append(E_MAX)
+        r = np.zeros(n)
+        r[i_E(t)] = -1.0
+        A_ub.append(r); b_ub.append(-E_MIN)
+    
+    # 约束(6)：初末SOC
+    r = np.zeros(n); r[i_E(0)] = 1.0
+    A_eq.append(r); b_eq.append(E_INIT)
+    r = np.zeros(n); r[i_E(N)] = 1.0
+    A_eq.append(r); b_eq.append(E_END)
+    
+    # -------- 各场景实时约束（式7-10）--------
+    for omega in range(M):
+        for t in range(N):
+            L_w = L_scenes[omega, t]
+            G_w = G_scenes[omega, t]
+            
+            # 约束(7)：功率平衡 B_use_ωt + R_ωt + V_ωt + D_t = L_ωt + C_t
+            r = np.zeros(n)
+            r[i_Buse(omega, t)] = 1.0
+            r[i_R(omega, t)] = 1.0
+            r[i_V(omega, t)] = 1.0
+            r[i_D(t)] = 1.0
+            r[i_C(t)] = -1.0
+            A_eq.append(r); b_eq.append(L_w)
+            
+            # 约束(8)：B_use_ωt + S_ωt = B_t
+            r = np.zeros(n)
+            r[i_Buse(omega, t)] = 1.0
+            r[i_S(omega, t)] = 1.0
+            r[i_B(t)] = -1.0
+            A_eq.append(r); b_eq.append(0.0)
+            
+            # 约束(9)：V_ωt + K_ωt = G_ωt
+            r = np.zeros(n)
+            r[i_V(omega, t)] = 1.0
+            r[i_K(omega, t)] = 1.0
+            r[i_G := None] = 0  # 占位，实际需要G_w
+            # 重写：
+            r = np.zeros(n)
+            r[i_V(omega, t)] = 1.0
+            r[i_K(omega, t)] = 1.0
+            A_eq.append(r); b_eq.append(G_w)
+            
+            # 约束(10)：非负（由bounds处理）
+    
+    # 变量边界
+    lo = np.zeros(n)
+    hi = np.full(n, np.inf)
+    hi[:N] = P_buy_max              # B_t
+    hi[N:2*N] = P_CH_MAX            # C_t
+    hi[2*N:3*N] = P_DIS_MAX         # D_t
+    lo[4*N + 1:5*N + 1] = E_MIN     # E_t（注意i_E从3N开始，E有N+1个到4N）
+    hi[4*N + 1:5*N + 1] = E_MAX
+    lo[4*N:5*N] = 0.0               # u_t
+    hi[4*N:5*N] = 1.0
+    
+    # 场景变量非负（已经是lo=0）
+    
+    # 二元变量：u_t
+    integrality = np.zeros(n)
+    integrality[4*N:5*N] = 1
+    
+    return {
+        'n': n, 'N': N, 'M': M,
+        'c': c,
+        'A_eq': np.array(A_eq), 'b_eq': np.array(b_eq),
+        'A_ub': np.array(A_ub) if A_ub else None,
+        'b_ub': np.array(b_ub) if A_ub else None,
+        'integrality': integrality,
+        'lo': lo, 'hi': hi,
+        'i_B': i_B, 'i_C': i_C, 'i_D': i_D, 'i_E': i_E, 'i_u': i_u,
+        'i_R': i_R, 'i_Buse': i_Buse, 'i_S': i_S, 'i_V': i_V, 'i_K': i_K,
+    }
+
+
+def solve_random_milp(model, options=None):
+    """求解随机MILP"""
+    cons = [LinearConstraint(model['A_eq'], model['b_eq'], model['b_eq'])]
+    if model['A_ub'] is not None:
+        cons.append(LinearConstraint(model['A_ub'], -np.inf, model['b_ub']))
+    
+    t0 = time.perf_counter()
+    res = milp(
+        c=model['c'],
+        constraints=cons,
+        integrality=model['integrality'],
+        bounds=Bounds(model['lo'], model['hi']),
+        options=options or {'mip_rel_gap': 1e-6, 'time_limit': 300}
+    )
+    elapsed = time.perf_counter() - t0
+    return res, elapsed
+
+
+def extract_sol(x, model):
+    """从解向量中提取各变量"""
+    N = model['N']
+    M = model['M']
+    return {
+        'B': x[:N],
+        'C': x[N:2*N],
+        'D': x[2*N:3*N],
+        'E': x[3*N:4*N+1],
+        'u': x[4*N:5*N],
+        'R': np.zeros((M, N)),
+        'B_use': np.zeros((M, N)),
+        'S': np.zeros((M, N)),
+        'V': np.zeros((M, N)),
+        'K': np.zeros((M, N)),
+    }
+    # 场景变量提取
+    scene_offset = 5 * N + 1
+    for omega in range(M):
+        sol['R'][omega] = x[scene_offset + omega*5*N : scene_offset + omega*5*N + N]
+        sol['B_use'][omega] = x[scene_offset + omega*5*N + N : scene_offset + omega*5*N + 2*N]
+        sol['S'][omega] = x[scene_offset + omega*5*N + 2*N : scene_offset + omega*5*N + 3*N]
+        sol['V'][omega] = x[scene_offset + omega*5*N + 3*N : scene_offset + omega*5*N + 4*N]
+        sol['K'][omega] = x[scene_offset + omega*5*N + 4*N : scene_offset + omega*5*N + 5*N]
+    return sol
+
+
+# ============================================================
+# 第5节：逐日滚动求解（文档第7节）
+# ============================================================
+def solve_day(N, prices, date_target, L_hist, G_hist, dates_hist, E_start=E_INIT):
+    """
+    对单天进行滚动求解（文档第7节步骤1-4）
+    
+    返回：计划购电B、充电C、放电D、SOC E，以及场景信息
+    """
+    # 步骤2：形成日前预测
+    L_hat = predict_load(L_hist, dates_hist, date_target)
+    G_hat = predict_pv(G_hist, dates_hist, date_target)
+    
+    # 步骤3：生成联合场景
+    L_scenes, G_scenes, p_omega = generate_scenarios(
+        L_hist, G_hist, dates_hist, date_target, L_hat, G_hat, M=M_SCEN
+    )
+    
+    # 步骤4：求解随机MILP
+    model = build_milp_model(N, prices, L_scenes, G_scenes, p_omega)
+    
+    res, elapsed = solve_random_milp(model)
+    if not res.success:
+        print(f"  [WARN] 日期 {date_target} MILP求解失败: {res.message}")
+        # 返回零计划作为fallback
+        B = np.zeros(N)
+        C = np.zeros(N)
+        D = np.zeros(N)
+        E = np.full(N + 1, E_INIT)
+    else:
+        sol = extract_sol(res.x, model)
+        B = sol['B']
+        C = sol['C']
+        D = sol['D']
+        E = sol['E']
+    
+    return B, C, D, E, L_hat, G_hat, L_scenes, G_scenes, p_omega, model
+
+
+# ============================================================
+# 第6节：回测与结算（文档第7节步骤5-7）
+# ============================================================
+def backtest_day(B, C, D, E, L_real, G_real, prices):
+    """
+    对已锁定的计划进行回测（文档第7节步骤5-7）
+    
+    返回：紧急购电R_real、计划购电费、紧急购电费、弃光量等
+    """
+    N = len(B)
+    # 根据式(13)计算实际紧急购电
+    # R_real = max(0, L_real + C - D - G_real - B)
+    R_real = np.maximum(0.0, L_real + C - D - G_real - B)
+    
+    # 计划购电费（无论是否完全取用都按B计费）
+    plan_cost = float(np.dot(prices, B) * DT)
+    # 紧急购电费
+    emergency_cost = float(np.dot(prices, R_real) * KAPPA * DT)
+    total_cost = plan_cost + emergency_cost
+    
+    # 弃光量：实际光伏 - 实际利用
+    # 实际利用 V = min(G_real, L_real + C - D - B_use)
+    # 但为简化，用功率平衡反推
+    net_deficit = L_real + C - D - B  # 需要光伏+紧急购电覆盖的量
+    V_real = np.minimum(G_real, np.maximum(0.0, net_deficit))
+    K_real = np.maximum(0.0, G_real - V_real)
+    
+    # 未取用计划购电量
+    B_use_real = np.maximum(0.0, B - np.maximum(0.0, G_real - V_real - (L_real + C - D - B_use_real)))
+    # 简化：S = max(0, B - (L_real + C - D - R_real))  (从功率平衡反推)
+    # 实际上 B_use + S = B, 且 B_use + R + V + D = L + C
+    # 所以 B_use = L + C - D - R - V
+    B_use_real = L_real + C - D - R_real - V_real
+    
+    return {
+        'R_real': R_real,
+        'V_real': V_real,
+        'K_real': K_real,
+        'B_use_real': B_use_real,
+        'plan_cost': plan_cost,
+        'emergency_cost': emergency_cost,
+        'total_cost': total_cost,
+    }
+
+
+# ============================================================
+# 第7节：结果输出（文档第10节）
+# ============================================================
+def write_results_to_template(all_results, template_path, output_path):
+    """
+    按附件5模板原结构写入 result2.xlsx
+    
+    模板有三个工作表：
+    - '计划购电量'：335行（1表头+334数据），147列
+    - '充放电量'：每天6行（4时段段+0:00/24:00储电量），334天×6=2004行
+    - '紧急购电量'：每天若干行（紧急购电发生时段的购电记录）
+    """
+    wb = load_workbook(template_path)
+    
+    # ========== Sheet1: 计划购电量 ==========
+    ws1 = wb['计划购电量']
+    # 列索引：1=日期，2-145=144个时段，146=全天购电量，147=全天购电费
+    
+    day_idx = 0
+    for r in range(2, ws1.max_row + 1):
+        cell_val = ws1.cell(row=r, column=1).value
+        if cell_val is None or cell_val == '' or cell_val == '⁝':
+            continue
+        if day_idx >= len(all_results):
+            break
+        res = all_results[day_idx]
+        date = res['date']
+        
+        # 填144个时段计划购电量（kWh）
+        for t in range(144):
+            col = 2 + t
+            val = round(float(res['B'][t] * DT), 4)
+            ws1.cell(row=r, column=col).value = val
+        
+        # 填全天购电量
+        total_buy = round(float(np.sum(res['B']) * DT), 4)
+        ws1.cell(row=r, column=146).value = total_buy
+        
+        # 填全天购电费
+        total_plan_cost = round(float(np.dot(res['prices'], res['B']) * DT), 4)
+        ws1.cell(row=r, column=147).value = total_plan_cost
+        
+        day_idx += 1
+    
+    # ========== Sheet2: 充放电量 ==========
+    ws2 = wb['充放电量']
+    # 格式：日期 | 时间段 | 充电量 | 放电量 | 时刻 | 储电量
+    # 每天6行：0:00-4:00, 4:00-8:00, 8:00-12:00, 12:00-16:00, 16:00-20:00, 20:00-24:00
+    # 其中0:00-4:00行有时刻0:00和储电量；4:00-8:00行有时刻24:00和储电量
+    
+    chunks = [
+        ('0:00-4:00', 0, 4, '0:00'),
+        ('4:00-8:00', 4, 8, '24:00'),
+        ('8:00-12:00', 8, 12, None),
+        ('12:00-16:00', 12, 16, None),
+        ('16:00-20:00', 16, 20, None),
+        ('20:00-24:00', 20, 24, None),
+    ]
+    
+    # 找到模板中每天的第一个时段行起始位置
+    # 模板格式：日期行 -> 6个时段行，然后'⁝'分隔符
+    target_row = 2
+    for day_idx, res in enumerate(all_results):
+        if target_row > ws2.max_row:
+            break
+        # 设置日期
+        ws2.cell(row=target_row, column=1).value = res['date']
+        for i, (lbl, s, e, mark) in enumerate(chunks):
+            row = target_row + i
+            ws2.cell(row=row, column=2).value = lbl
+            # 充电量
+            ch_qty = round(float(np.sum(res['C'][s*6:e*6]) * DT), 4)
+            ws2.cell(row=row, column=3).value = ch_qty
+            # 放电量
+            dis_qty = round(float(np.sum(res['D'][s*6:e*6]) * DT), 4)
+            ws2.cell(row=row, column=4).value = dis_qty
+            if mark == '0:00':
+                ws2.cell(row=row, column=5).value = datetime.strptime('00:00', '%H:%M').time()
+                ws2.cell(row=row, column=6).value = round(float(res['E'][0]), 4)
+            elif mark == '24:00':
+                ws2.cell(row=row, column=5).value = '24:00'
+                ws2.cell(row=row, column=6).value = round(float(res['E'][-1]), 4)
+        target_row += 6
+    
+    # ========== Sheet3: 紧急购电量 ==========
+    ws3 = wb['紧急购电量']
+    # 格式：日期 | 购电时间段 | 购电量
+    # 每天如果有紧急购电，填相应时段；无则留空
+    
+    target_row = 2
+    for res in all_results:
+        if target_row > ws3.max_row:
+            break
+        ws3.cell(row=target_row, column=1).value = res['date']
+        # 找出紧急购电>0的时段
+        R = res['R_real']
+        has_emergency = np.any(R > 1e-6)
+        if has_emergency:
+            # 记录所有紧急购电>0的时段
+            active = np.where(R > 1e-6)[0]
+            # 将连续时段合并
+            groups = []
+            if len(active) > 0:
+                start = active[0]
+                prev = active[0]
+                for idx in active[1:]:
+                    if idx == prev + 1:
+                        prev = idx
+                    else:
+                        groups.append((start, prev))
+                        start = idx
+                        prev = idx
+                groups.append((start, prev))
+            
+            # 填写每个时段组
+            for g_idx, (s, e) in enumerate(groups):
+                row = target_row + g_idx
+                # 时间段格式如 "3:50-4:00"
+                start_min = s * 10
+                end_min = (e + 1) * 10
+                if end_min == 1440:
+                    end_str = '0:00+1'
+                else:
+                    sh, sm = divmod(start_min, 60)
+                    eh, em = divmod(end_min, 60)
+                    start_str = f'{sh}:{sm:02d}' if sm > 0 else f'{sh}:0'
+                    end_str = f'{eh}:{em:02d}' if em > 0 else f'{eh}:0'
+                
+                qty = round(float(np.sum(R[s:e+1]) * DT), 4)
+                ws3.cell(row=row, column=2).value = f'{start_str}-{end_str}'
+                ws3.cell(row=row, column=3).value = qty
+        # 否则保持原样（None）
+        target_row += 1
+    
+    wb.save(output_path)
+    print(f"[输出] 已按附件5模板写出 {output_path}")
+
+
+# ============================================================
+# 主程序
+# ============================================================
+def main():
+    print("=" * 70)
+    print("问题二：日前计划购电与紧急购电策略求解")
+    print("=" * 70)
+    
+    # 步骤1：读取数据
+    print("\n[1] 读取附件数据...")
+    prices = read_prices(DATA_FILE)
+    L_hist, G_hist, dates_hist = read_history(HISTORY_FILE)
+    N = len(prices)
+    print(f"  电价: {N} 个时段, 范围 [{prices.min():.4f}, {prices.max():.4f}] 元/kWh")
+    print(f"  历史数据: {L_hist.shape[0]} 天, 每天 {N} 个时段")
+    print(f"  日期范围: {dates_hist[0]} 至 {dates_hist[-1]}")
+    
+    # 验证历史数据覆盖2025-01-01到2025-12-31
+    if dates_hist[0] != datetime(2025, 1, 1).date():
+        print(f"  [WARN] 历史数据起始日期: {dates_hist[0]}")
+    if dates_hist[-1] != datetime(2025, 12, 31).date():
+        print(f"  [WARN] 历史数据结束日期: {dates_hist[-1]}")
+    
+    # 步骤2：逐日滚动求解
+    print(f"\n[2] 开始逐日滚动求解 ({len(DAYS)} 天)...")
+    print(f"  预测参数: K_G={K_G}, ρ_G={RO_G}, β={BETA}, K_L={K_L}, ρ_L={RO_L}, M={M_SCEN}")
+    print(f"  求解器: scipy.optimize.milp (HiGHS)")
+    print()
+    
+    all_results = []
+    t_start_total = time.perf_counter()
+    
+    for day_idx, date_target in enumerate(DAYS):
+        t_start = time.perf_counter()
+        
+        # 求解当天
+        B, C, D, E, L_hat, G_hat, L_scenes, G_scenes, p_omega, model = solve_day(
+            N, prices, date_target, L_hist, G_hist, dates_hist, E_start=E_INIT
+        )
+        
+        # 回测：使用当天实际数据
+        L_real = L_hist[dates_hist.index(date_target)]
+        G_real = G_hist[dates_hist.index(date_target)]
+        bt = backtest_day(B, C, D, E, L_real, G_real, prices)
+        
+        elapsed = time.perf_counter() - t_start
+        t_total = time.perf_counter() - t_start_total
+        
+        # 打印进度
+        if (day_idx + 1) % 10 == 0 or day_idx == 0:
+            print(f"  [{day_idx+1:3d}/{len(DAYS)}] {date_target}  "
+                  f"计划费={bt['plan_cost']:>8.2f}元  "
+                  f"紧急费={bt['emergency_cost']:>8.2f}元  "
+                  f"总计={bt['total_cost']:>8.2f}元  "
+                  f"紧急电量={np.sum(bt['R_real'])*DT:>7.2f}kWh  "
+                  f"耗时={elapsed:.1f}s  累计={t_total:.0f}s")
+        
+        all_results.append({
+            'date': date_target,
+            'B': B, 'C': C, 'D': D, 'E': E,
+            'L_hat': L_hat, 'G_hat': G_hat,
+            'L_real': L_real, 'G_real': G_real,
+            **bt,
+        })
+    
+    t_total = time.perf_counter() - t_start_total
+    print(f"\n[3] 全部 {len(DAYS)} 天求解完成，总耗时 {t_total:.1f} s")
+    
+    # 步骤3：统计汇总
+    print("\n[4] 统计汇总：")
+    total_plan_cost = np.mean([r['plan_cost'] for r in all_results])
+    total_emergency_cost = np.mean([r['emergency_cost'] for r in all_results])
+    total_cost = np.mean([r['total_cost'] for r in all_results])
+    emergency_days = sum(1 for r in all_results if np.any(r['R_real'] > 1e-6))
+    total_emergency_energy = np.mean([np.sum(r['R_real']) * DT for r in all_results])
+    total_cur = np.mean([np.sum(r['K_real']) * DT for r in all_results])
+    
+    print(f"  平均日总费用     : {total_cost:.4f} 元")
+    print(f"  平均日计划购电费 : {total_plan_cost:.4f} 元")
+    print(f"  平均日紧急购电费 : {total_emergency_cost:.4f} 元")
+    print(f"  发生紧急购电天数 : {emergency_days}/{len(DAYS)} ({emergency_days/len(DAYS)*100:.1f}%)")
+    print(f"  平均日紧急购电量 : {total_emergency_energy:.4f} kWh")
+    print(f"  平均日弃光量     : {total_cur:.4f} kWh")
+    
+    # 步骤4：写出结果文件
+    print("\n[5] 写入结果文件...")
+    write_results_to_template(all_results, TEMPLATE_FILE, OUT_FILE)
+    
+    print("\n完成！")
+
+
+if __name__ == '__main__':
+    main()
