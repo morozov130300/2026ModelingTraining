@@ -1511,7 +1511,8 @@ def main():
                    help='full=全量334天（默认） | repdays=4代表日核验 | outputs=由缓存重建输出')
     ap.add_argument('--force', action='store_true', help='忽略缓存全部重解')
     ap.add_argument('--limit', type=int, default=None, help='仅求解前 N 个决策日（冒烟测试）')
-    ap.add_argument('--workers', type=int, default=8, help='并行进程数（AGENTS 固定 8）')
+    ap.add_argument('--workers', type=int, default=os.cpu_count() or 8,
+                    help='并行进程数（默认=本机CPU逻辑核数）')
     ap.add_argument('--time-limit', type=float, default=TIME_LIMIT_DEFAULT,
                     help='单次 MILP 时间限制（秒）')
     args = ap.parse_args()
