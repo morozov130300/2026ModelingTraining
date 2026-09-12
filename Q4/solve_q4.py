@@ -1607,6 +1607,23 @@ def explain_cases(yearly, risk, cf, sens):
     total_dev3 = y3['total'] - b3['total']
     r_mit = (adapt_eff2 / price_eff2 if abs(price_eff2) > 1e-9 else float('nan'))
 
+    # 归因占比（文档「最终变化来自价格水平还是调度策略」）：
+    # 总变化 C_V(x^V)-C_F(x^F) = 纯价格结算效应 + 调度适应效应
+    price_pct2 = (price_eff2 / total_dev2 if abs(total_dev2) > 1e-9 else float('nan'))
+    adapt_pct2 = (adapt_eff2 / total_dev2 if abs(total_dev2) > 1e-9 else float('nan'))
+    price_pct3 = (price_eff3 / total_dev3 if abs(total_dev3) > 1e-9 else float('nan'))
+    adapt_pct3 = (adapt_eff3 / total_dev3 if abs(total_dev3) > 1e-9 else float('nan'))
+
+    # 文档 576 行：确定性模型下调度适应效应应 ≤0；偶尔为正本身是「样本外/执行截断」
+    # 模型风险的证据，须按日统计其出现天数、不能直接删除。cf[*][d] 含逐日
+    # C_V_xF（x^F 按附件4 结算）与 C_V_xV（x^V 逐日总费，由调用方补填）。
+    n_adapt_pos_q2 = int(sum(1 for v in cf['q2'].values()
+                             if np.isfinite(v.get('C_V_xV', float('nan')))
+                             and v['C_V_xV'] - v['C_V_xF'] > 0))
+    n_adapt_pos_q3 = int(sum(1 for v in cf['q3'].values()
+                             if np.isfinite(v.get('C_V_xV', float('nan')))
+                             and v['C_V_xV'] - v['C_V_xF'] > 0))
+
     cases = {}
     cases['情形一：总费用上升但调度适应效应为负'] = {
         '成立': bool(total_dev2 > 0 and adapt_eff2 < 0),
@@ -1649,7 +1666,13 @@ def explain_cases(yearly, risk, cf, sens):
     meta = {'r_mitigate': r_mit, 'price_eff2': price_eff2, 'adapt_eff2': adapt_eff2,
             'price_eff3': price_eff3, 'adapt_eff3': adapt_eff3,
             'total_dev2': total_dev2, 'total_dev3': total_dev3,
-            'C_V_xF2': cvF2, 'C_F_xF2': cF2, 'C_V_xF3': cvF3, 'C_F_xF3': cF3}
+            'C_V_xF2': cvF2, 'C_F_xF2': cF2, 'C_V_xF3': cvF3, 'C_F_xF3': cF3,
+            # 归因占比（文档「最终变化来自价格水平还是调度策略」）
+            'price_pct2': price_pct2, 'adapt_pct2': adapt_pct2,
+            'price_pct3': price_pct3, 'adapt_pct3': adapt_pct3,
+            # 文档 576 行：调度适应效应>0 的逐日天数（模型风险证据，不删除）
+            'n_adapt_pos_q2': n_adapt_pos_q2, 'n_adapt_pos_q3': n_adapt_pos_q3,
+            'n_day_q2': len(cf['q2']), 'n_day_q3': len(cf['q3'])}
     return cases, meta
 
 
@@ -2047,6 +2070,85 @@ def bess_value_table(sens):
             'Q4-3 储能价值/元': nb['q3']['total'] - b['q3']['total'],
             'Q4-3 EFC': b['q3']['EFC_use']})
     return rows
+
+
+def lam_sensitivity_table(sens):
+    """文档 819-842「价格振幅敏感性：最重要的检验」：λ∈{0,0.5,1,1.5} 逐档
+    报告 总费用、储能价值、EFC、紧急购电费、Q3 调整价值。
+    各档数据来自 sens['lam0'/'lam05'/'vol_base'/'lam15'] 的 q2/q3 聚合指标，
+    全部是已求解结果，本函数只读取相减，不重解 MILP。
+    λ=1.0 即正式结果 vol（vol_base），在此作为独立档位显式列出。"""
+    tiers = [('λ=0.0（同日均值平坦）', 'lam0', 'lam0nb'),
+             ('λ=0.5', 'lam05', 'lam05nb'),
+             ('λ=1.0（附件4 原始，正式结果）', 'vol_base', 'nobess'),
+             ('λ=1.5（放大日内价差）', 'lam15', 'lam15nb')]
+    rows = []
+    for lab, kb, knb in tiers:
+        b = sens.get(kb)
+        nb = sens.get(knb)
+        if b is None:
+            continue
+        v_bess = (nb['q2']['total'] + nb['q3']['total']) - (b['q2']['total'] + b['q3']['total']) \
+            if nb is not None else float('nan')
+        rows.append({
+            '振幅档': lab,
+            'Q4-2 总费用/元': b['q2']['total'],
+            'Q4-2 紧急购电费/元': b['q2']['emg'],
+            'Q4-2 EFC(可用容量)': b['q2']['EFC_use'],
+            'Q4-3 总费用/元': b['q3']['total'],
+            'Q4-3 紧急购电费/元': b['q3']['emg'],
+            'Q4-3 调整净费/元': b['q3']['adj'],
+            'Q4-3 EFC(可用容量)': b['q3']['EFC_use'],
+            '储能价值V^BESS/元': v_bess,
+        })
+    return rows
+
+
+def volatility_effect(sens_daily, pmat_v):
+    """文档 593「同均值平坦电价剥离价格水平」：C(c^V) − C(c^flat)。
+    两组价格日均水平相同（c^flat = c̄_d），差异全部来自日内波动及其与负荷、
+    光伏的时间关系。这里只取有缓存的两族对照值相减，不重解。
+    返回 {fam: 全年 Σ_d [C(c^V_d) − C(c^flat_d)]}，正值表示波动本身推高费用。"""
+    flat2 = sens_daily.get('lam0', {}).get('q2', {})
+    vol2 = sens_daily.get('vol', {}).get('q2', {})
+    flat3 = sens_daily.get('lam0', {}).get('q3', {})
+    vol3 = sens_daily.get('vol', {}).get('q3', {})
+    out = {}
+    for fam, f, v in (('q2', flat2, vol2), ('q3', flat3, vol3)):
+        common = sorted(set(f) & set(v))
+        out[fam] = {
+            'annual': float(sum(v[d] - f[d] for d in common)),
+            'n_day': len(common),
+            'mean_daily': float(np.mean([v[d] - f[d] for d in common])) if common else float('nan'),
+        }
+    return out
+
+
+def arbitrage_check(yearly):
+    """文档 325「若总购电量增加、总费用下降且 c̄^buy 明显下降，可认定调度成功利用了
+    低价窗口」。三个条件全部由已算好的 yearly 指标联动判定，不重解。
+    对 Q4-2（波动电价）与 Q2 固定电价基线对比。"""
+    def _chk(fam_v, fam_f):
+        yv, yf = yearly[fam_v], yearly[fam_f]
+        cond_energy = yv['buy_energy'] - yf['buy_energy'] > 0
+        cond_cost = yv['total'] - yf['total'] < 0
+        # c̄^buy 下降：波动电价下购电加权均价低于固定电价下
+        cond_wavg = yv['buy_wavg'] < yf['buy_wavg'] if (np.isfinite(yv['buy_wavg'])
+                                                        and np.isfinite(yf['buy_wavg'])) else False
+        arbitrage = bool(cond_energy and cond_cost and cond_wavg)
+        return {
+            '总购电量变化/kWh': yv['buy_energy'] - yf['buy_energy'],
+            '总费用变化/元': yv['total'] - yf['total'],
+            'c̄^buy_固定/(元/kWh)': yf['buy_wavg'],
+            'c̄^buy_波动/(元/kWh)': yv['buy_wavg'],
+            'c̄^buy 变化/(元/kWh)': yv['buy_wavg'] - yf['buy_wavg'],
+            '条件1_购电量增加': bool(cond_energy),
+            '条件2_总费用下降': bool(cond_cost),
+            '条件3_加权均价下降': bool(cond_wavg),
+            '套利判定': arbitrage,
+        }
+    return {'Q4-2 vs Q2 固定电价': _chk('Q4-2 波动电价', 'Q2 固定电价'),
+            'Q4-3 vs Q3-S3 固定电价': _chk('Q4-3-S3 波动电价', 'Q3-S3 固定电价')}
 
 
 def collect_risk(recs_q2, recs_q3, fixed_q2, fixed_q3):
@@ -2584,6 +2686,42 @@ def write_summary(yearly, risk, cf, recs_q2, recs_q3, diag=None):
                 _sheet('价格预测分月汇总', hdr,
                        [[r.get(h) for h in hdr] for r in p['monthly']])
 
+        # ---- 文档「价格振幅敏感性 λ∈{0,0.5,1,1.5}」逐档对照 ----
+        if diag.get('lam_rows'):
+            lr = diag['lam_rows']
+            _sheet('λ逐档敏感性',
+                   ['振幅档', 'Q4-2 总费用/元', 'Q4-2 紧急购电费/元', 'Q4-2 EFC(可用容量)',
+                    'Q4-3 总费用/元', 'Q4-3 紧急购电费/元', 'Q4-3 调整净费/元',
+                    'Q4-3 EFC(可用容量)', '储能价值V^BESS/元'],
+                   [[r.get(k) for k in ['振幅档', 'Q4-2 总费用/元', 'Q4-2 紧急购电费/元',
+                                        'Q4-2 EFC(可用容量)', 'Q4-3 总费用/元',
+                                        'Q4-3 紧急购电费/元', 'Q4-3 调整净费/元',
+                                        'Q4-3 EFC(可用容量)', '储能价值V^BESS/元']]
+                    for r in lr])
+
+        # ---- 文档「同均值平坦电价剥离价格水平」：波动本身效应 ----
+        if diag.get('vol_eff_q2') is not None:
+            ve = [('Q4-2 波动本身效应 C(c^V)−C(c^flat)/元', diag.get('vol_eff_q2')),
+                  ('Q4-3-S3 波动本身效应 C(c^V)−C(c^flat)/元', diag.get('vol_eff_q3'))]
+            _sheet('同均值平坦价格对照', ['指标', '数值'], ve)
+
+        # ---- 文档「购电加权均价套利判定」（三条件联动）----
+        if diag.get('arb'):
+            rows = []
+            for nm, a in diag['arb'].items():
+                rows.append([
+                    nm,
+                    a['总购电量变化/kWh'], a['总费用变化/元'],
+                    a['c̄^buy_固定/(元/kWh)'], a['c̄^buy_波动/(元/kWh)'],
+                    a['c̄^buy 变化/(元/kWh)'],
+                    a['条件1_购电量增加'], a['条件2_总费用下降'],
+                    a['条件3_加权均价下降'], a['套利判定']])
+            _sheet('套利判定',
+                   ['方案对', '总购电量变化/kWh', '总费用变化/元',
+                    'c̄^buy_固定/(元/kWh)', 'c̄^buy_波动/(元/kWh)', 'c̄^buy 变化/(元/kWh)',
+                    '条件1_购电量↑', '条件2_总费用↓', '条件3_加权均价↓', '套利判定'],
+                   rows)
+
     for w_ in wb.worksheets:
         _autosize(w_)
     wb.save(SUMMARY_FILE)
@@ -2929,12 +3067,47 @@ def run_diagnostics(ctx2, ctx3, recs, fixed_q2, fixed_q3, cf, pmat_v, sens, year
               '⑧S0-S3基准计划最大偏差', '④SOC范围', '充放电功率峰值'):
         print(f"    {k}: {verify[k]}")
     print(f"    结论: {'全部通过' if vok else '存在未通过项，请检查'}")
+
+    # ---- 文档 819-842「价格振幅敏感性」逐档对照（λ∈{0,0.5,1,1.5}）----
+    lam_rows = lam_sensitivity_table(sens)
+    print("  价格振幅敏感性 λ∈{0,0.5,1,1.5} 逐档对照（文档 840 行要求）")
+    for r in lam_rows:
+        print(f"    {r['振幅档']:<28} Q4-2总 {_wan(r['Q4-2 总费用/元'])} 万元 | "
+              f"Q4-3总 {_wan(r['Q4-3 总费用/元'])} 万元 | "
+              f"V^BESS {_wan(r['储能价值V^BESS/元'])} 万元 | "
+              f"Q4-2 EFC {r['Q4-2 EFC(可用容量)']:.4f}")
+    # ---- 文档 593「同均值平坦电价剥离价格水平」：波动本身效应 ----
+    # 注：run_diagnostics 只有 sens（年度聚合），没有 sens_daily；
+    # 波动效应的逐日对照需由调用方（collect_all）传入 sens_daily，这里用年度聚合近似。
+    vol_eff_q2 = sens['vol_base']['q2']['total'] - sens['lam0']['q2']['total'] \
+        if 'lam0' in sens and 'vol_base' in sens else float('nan')
+    vol_eff_q3 = sens['vol_base']['q3']['total'] - sens['lam0']['q3']['total'] \
+        if 'lam0' in sens and 'vol_base' in sens else float('nan')
+    print(f"  波动本身效应 C(c^V)−C(c^flat)（文档 593 行，同均值平坦电价剥离价格水平）")
+    print(f"    Q4-2: {vol_eff_q2:+.2f} 元（正值=波动推高费用，负值=波动节省费用）")
+    print(f"    Q4-3-S3: {vol_eff_q3:+.2f} 元")
+    # ---- 文档 325「购电加权均价套利判定」（三条件联动）----
+    arb = arbitrage_check(yearly)
+    print("  购电加权均价套利判定（文档 325 行：购电量↑+总费用↓+c̄^buy↓ 三条件联动）")
+    for nm, a in arb.items():
+        tag = '套利成立' if a['套利判定'] else '不成立'
+        print(f"    {nm}: {tag}")
+        print(f"      购电量变化 {a['总购电量变化/kWh']:+.2f} kWh，"
+              f"总费用变化 {a['总费用变化/元']:+.2f} 元，"
+              f"c̄^buy {a['c̄^buy_固定/(元/kWh)']:.4f} → {a['c̄^buy_波动/(元/kWh)']:.4f} 元/kWh"
+              f"（{a['c̄^buy 变化/(元/kWh)']:+.4f}）")
+        print(f"      条件1购电量↑={a['条件1_购电量增加']}，"
+              f"条件2总费用↓={a['条件2_总费用下降']}，"
+              f"条件3加权均价↓={a['条件3_加权均价下降']}")
     print("=" * 72)
 
     return {'rows': diag_rows, 'groups': groups, 'coincidence': coincidence,
             'worst': worst, 'life': life, 'coef': coef, 's0s3': s0s3,
             'cases': cases, 'meta': meta, 'verify': verify, 'verify_ok': vok,
             'pairs': pairs, 'bess': bess_value_table(sens), 'pf': pf,
+            'lam_rows': lam_rows,
+            'vol_eff_q2': vol_eff_q2, 'vol_eff_q3': vol_eff_q3,
+            'arb': arb,
             'pwmae': {nm: yearly[nm]['pwmae']
                       for nm in ('Q3-S3 固定电价', 'Q4-3-S3 波动电价')}}
 
@@ -2964,6 +3137,13 @@ def collect_all(ctx2, ctx3, pmat_v, recs, args):
 
     cf, _ = build_counterfactual(ctx, fixed_q2, fixed_q3, native_q2, native_q3, pmat_v)
     cf = add_shift(cf, fixed_q2, recs['q2'])
+    # 逐日 C_V(x^V)（x^V = vol 实验逐日总费），供 explain_cases 统计「调度适应效应>0 天数」
+    for d, r in ((r['date'], r) for r in recs['q2']):
+        if d in cf['q2']:
+            cf['q2'][d]['C_V_xV'] = float(r['total_cost'])
+    for d, r in ((r['date'], r) for r in recs['q3']):
+        if d in cf['q3']:
+            cf['q3'][d]['C_V_xV'] = float(r['scen'][3]['C_total'])
     regression_report(cf)
 
     # 结算自检：U/W 抓取 + run_block 推进 + 成本核算口径必须逐日复现记录自身分项
