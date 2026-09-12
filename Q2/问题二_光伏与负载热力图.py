@@ -30,8 +30,8 @@ SEASON_OF_MONTH = {
 SEASON_ANGLE_DEG = {"冬": 15, "春": 105, "夏": 195, "秋": 285}   # 四季中心（四个对角）
 SEASON_BOUND_DEG = [60, 150, 240, 330]                    # 季与季之间的分界线（粗）
 
-# 色标：vmax 压到“白天有光照”区间，让夏季饱和到红端、冬季落在冷色端
-VMAX_AUTO  = True        # True=按“冬季白天 P90”自动；False=用 VMAX_FIXED
+# 色标：vmax 取“全年白天 P99”，只有夏季（左下角）强光时段饱和到橙端、突出夏季光照最强
+VMAX_AUTO  = True        # True=按“全年白天 P99”自动；False=用 VMAX_FIXED
 VMAX_FIXED = 4000.0     # kW，VMAX_AUTO=False 时使用
 DAYLIGHT   = slice(36, 114)   # 白天 06:00–18:50（10 分钟 slot 36..113），用于统计与定 vmax
 
@@ -86,15 +86,14 @@ print(f"数据源：{XLSX} [{pv_sheet}]")
 print(f"日期数：{n_days}，每天时段数：{n_slots}")
 print(f"光伏全年范围：[{values.min():.4f}, {values.max():.4f}] kW")
 
-# 色标 vmax（数据驱动，让夏季饱和、冬季铺满下段 → 放大季节差异）
+# 色标 vmax（数据驱动）：取全年白天 P99 —— 仅夏季强光时段触及橙端、突出左下角夏季区
 if VMAX_AUTO:
-    winter_mask = np.isin(months_of_day, [12, 1, 2])
-    winter_day = values[winter_mask][:, DAYLIGHT].ravel()
-    winter_day = winter_day[winter_day > 0]
-    VMAX = float(np.quantile(winter_day, 0.90))
+    day_all = values[:, DAYLIGHT].ravel()          # 全年白天 06:00–18:50 全部时段
+    day_all = day_all[np.isfinite(day_all)]
+    VMAX = float(np.quantile(day_all, 0.99))
 else:
     VMAX = float(VMAX_FIXED)
-print(f"色标范围：[0, {VMAX:.1f}] kW（{'自动=冬季白天 P90' if VMAX_AUTO else '固定'}）；0 kW=冷端（蓝）、强光=红端（蓝→红彩色过渡）")
+print(f"色标范围：[0, {VMAX:.1f}] kW（{'自动=全年白天 P99，夏季强光饱和到橙端' if VMAX_AUTO else '固定'}）；0 kW=浅灰端（黑夜无光）、非线性分段色阶：中低值加密、高值黄橙拉开；色标刻度数字已隐藏")
 
 # 每季白天典型功率（供报告引用“夏/冬典型峰谷”）
 for sname in ["冬", "春", "夏", "秋"]:
@@ -114,17 +113,26 @@ theta_edges = theta_edges / theta_edges[-1] * 2 * np.pi    # 归一到 [0, 2π]
 inner_radius, outer_radius = 1.5, 3.0
 radius_edges = np.linspace(inner_radius, outer_radius, n_slots + 1)
 
-# ---------- 数据 → 网格 + 冷→热彩色带（0 kW=冷端蓝，强光=热端红，全程有色相、无灰）----------
-C = values.T                                                # (时段, 天)
-Cm = C                                                     # 不 mask；0 落在冷端蓝，与色标图例一致
-
-# 冷（深蓝）→ 蓝 → 青 → 黄绿 → 黄 → 橙 → 热（红/深红）；顶端红，无灰
+# ---------- 非线性分段色带（橙→浅灰）：低值=浅灰（黑夜/0 kW），中间青绿收窄加密，高值黄橙拉开 ----------
+# 分段位置手工控制：0~15% 浅灰（黑夜/弱光）→ 15~40% 灰蓝→蓝→青→绿（收窄）
+# → 40~62% 黄绿过渡（中低值加密，光伏出力大部分集中于此）→ 62~100% 黄→橙→深橙（高功率拉开）
 cmap = LinearSegmentedColormap.from_list(
-    "cold2hot_pv",
-    ["#0b1e6f", "#1e88e5", "#26c6da", "#aeea00", "#ffd600", "#fb8c00", "#e53935", "#b71c1c"],
+    "pv_piecewise_orange",
+    [
+        (0.00, "#9e9e9e"), (0.08, "#8a8a8a"), (0.15, "#7f92bd"),
+        (0.22, "#64b5f6"), (0.30, "#26c6da"), (0.38, "#26a69a"),
+        (0.46, "#66bb6a"), (0.54, "#9ccc65"), (0.62, "#c0ca33"),
+        (0.70, "#ffd600"), (0.78, "#ffc107"), (0.86, "#ffa000"),
+        (0.93, "#fb8c00"), (1.00, "#f4511e"),
+    ],
     N=256,
 )
-cmap.set_bad("#0b1e6f")   # 保险：任何残留 mask 也归到冷端蓝（非灰）
+cmap.set_bad("#9e9e9e")   # 保险：任何残留 mask 也归到灰色端（黑夜）
+
+# ---------- 数据 → 网格 + 彩色带（黑夜/0 kW=浅灰端，昼夜分界一眼看清）----------
+C = values.T                                                # (时段, 天)
+Cm = C                                                      # 不 mask；0（黑夜无光）落在色带浅灰端
+# 色带的非线性已由上面的分段位置控制，norm 用线性即可
 norm = Normalize(vmin=0.0, vmax=VMAX)
 
 
@@ -136,7 +144,7 @@ fig, ax = plt.subplots(
 )
 ax.set_theta_zero_location("N")
 ax.set_theta_direction(-1)
-ax.set_ylim(0, outer_radius + 0.9)          # 外圈留出季节标签空间
+ax.set_ylim(0, outer_radius + 1.10)         # 外圈留出更大的季节标签空间
 ax.grid(False)
 ax.spines["polar"].set_visible(False)
 
@@ -157,29 +165,35 @@ for a in map(np.deg2rad, SEASON_BOUND_DEG):   # 季界粗线
             color="white", linewidth=1.6, alpha=0.95)
 
 
-# ---------- 季节标签（四个角）与月份小标签 ----------
+# ---------- 季节标签（更靠外，与月份数字拉开距离）与月份数字 ----------
 lb_box = dict(facecolor="white", edgecolor="none", alpha=0.85, pad=2)
-for name, deg in SEASON_ANGLE_DEG.items():    # 四季大标签（外）
+for name, deg in SEASON_ANGLE_DEG.items():    # 四季大标签（最外圈）
     a = np.deg2rad(deg)
-    ax.text(a, outer_radius + 0.42, name,
+    ax.text(a, outer_radius + 0.80, name,
             ha="center", va="center",
             fontsize=27, fontweight="bold", color="#000000", bbox=lb_box)
-for m in range(1, 13):                        # 月份小标签（内）
+for m in range(1, 13):                        # 月份数字（无白底，向外挪一点）
     a = np.deg2rad((m - 0.5) * 30)
-    ax.text(a, outer_radius + 0.16, str(m),
+    ax.text(a, outer_radius + 0.20, str(m),
             ha="center", va="center",
-            fontsize=12, color="#000000", bbox=lb_box)
+            fontsize=22, fontweight="bold", color="#000000")
+
+# 去掉极角（度数）刻度信息（45°、135° 等无用标签）
+ax.set_xticks([])
+# 去掉径向默认刻度数字（0.5、1、1.5 等），时间圈线为手工绘制、无需刻度
+ax.set_yticks([])
 
 
-# ---------- 日内时间刻度 ----------
+# ---------- 日内时间刻度（仅 06/12/18，角度错开避免重叠；0点/24点标签去掉） ----------
 hours = np.array([0, 6, 12, 18, 24])
 time_radii = inner_radius + hours / 24 * (outer_radius - inner_radius)
-ax.set_yticks(time_radii)
-ax.set_yticklabels([f"{h:02d}:00" for h in hours], fontsize=13.5, color="#000000")
-ax.set_rlabel_position(80)
 
-for label in ax.get_yticklabels():
-    label.set_bbox(dict(facecolor="white", edgecolor="none", alpha=0.8, pad=1))
+time_label_angle = {6: 105, 12: 80, 18: 55}   # 三个时间标签角度错开（0=N 顺时针）
+for h, a_deg in time_label_angle.items():
+    r = inner_radius + h / 24 * (outer_radius - inner_radius)
+    ax.text(np.deg2rad(a_deg), r, f"{h:02d}:00",
+            ha="center", va="center", fontsize=14, color="#000000",
+            bbox=dict(facecolor="white", edgecolor="none", alpha=0.8, pad=1.5))
 
 circle_angles = np.linspace(0, 2 * np.pi, 721)
 for radius in time_radii:
@@ -188,26 +202,27 @@ for radius in time_radii:
 
 
 # ---------- 标题、中心说明和色标 ----------
-ax.text(0.5, 0.52, str(YEAR), transform=ax.transAxes,
+ax.text(0.5, 0.50, str(YEAR), transform=ax.transAxes,
         ha="center", va="center", fontsize=45, fontweight="bold")
-ax.text(0.5, 0.44, "小区光伏\n内 → 外：00:00 → 24:00",
-        transform=ax.transAxes, ha="center", va="center",
-        fontsize=16.5, linespacing=1.7)
 ax.set_title(f"{YEAR} 年小区光伏出力环形热力图",
              fontsize=27, pad=30)
 
 colorbar = fig.colorbar(mesh, ax=ax, pad=0.10, shrink=0.72, aspect=28)
 colorbar.set_label("光伏功率（kW）", fontsize=18)
-colorbar.set_ticks(np.linspace(0, VMAX, 6))
+colorbar.set_ticks([])          # 删除出力大小刻度数字，色带只作强弱示意
 
-ax.legend(handles=[Patch(facecolor="#0b1e6f", label="无光照 / 0 kW（冷端）")],
+ax.legend(handles=[Patch(facecolor="#9e9e9e", edgecolor="#000000", label="黑夜 / 无光照（0 kW，中灰）")],
           loc="lower left", bbox_to_anchor=(-0.05, -0.05), frameon=False)
 
 fig.savefig(OUTPUT, dpi=300, bbox_inches="tight", facecolor="white")    # 图1
+# 保存与弹窗同步：先落盘，立即非阻塞弹出窗口（无需关闭窗口等待）
+plt.show(block=False)
+plt.pause(0.5)
 
 
 # ============================================================
 #  图2：小区负载「星期 × 整点」热力图（7 × 24，格 = 全年该星期该小时均值）
+#  说明：网格图（图2）保持原样，不在本次修改范围内
 # ============================================================
 wb_l = openpyxl.load_workbook(XLSX, read_only=True)
 load_sheet = next(s for s in wb_l.sheetnames if "负载" in s)
@@ -241,13 +256,18 @@ for wd in range(7):
 LVMAX = float(np.quantile(L_hourly.ravel(), 0.90))
 WD_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 print(f"\n[负载图] 数据源：{XLSX} [{load_sheet}]；7×24 格，格 = {YEAR} 全年该星期该小时均值")
-print(f"[负载图] 色标范围：[0, {LVMAX:.1f}] kW（全年负载 P90）；低负载=冷端（蓝）、高峰=红端（蓝→红彩色过渡）")
+print(f"[负载图] 色标范围：[0, {LVMAX:.1f}] kW（全年负载 P90）；低负载=紫端、高峰=橙端（与图1同一色相渐变色带）")
 for wd, wdn in enumerate(WD_NAMES):
     print(f"    {wdn}：日均 {load_avg[wd].mean():.1f} kW / 峰值 {load_avg[wd].max():.1f} kW")
 
-cmap2 = LinearSegmentedColormap.from_list("cold2hot_load",
-    ["#0b1e6f", "#1e88e5", "#26c6da", "#aeea00", "#ffd600", "#fb8c00", "#e53935", "#b71c1c"], N=256)
-cmap2.set_bad("#0b1e6f")
+# 图2 使用独立色带实例（同为橙→紫色相渐变，但与图1互不共享、标尺用负载自己的 LVMAX）
+cmap2 = LinearSegmentedColormap.from_list(
+    "hue_orange2purple_load",
+    ["#7b1fa2", "#5e35b1", "#1e88e5", "#26c6da", "#26a69a",
+     "#7cb342", "#c0ca33", "#ffd600", "#ffb300", "#fb8c00"],
+    N=256,
+)
+cmap2.set_bad("#7b1fa2")
 
 fig2, ax2 = plt.subplots(figsize=(12, 7.5), layout="constrained")
 im2 = ax2.imshow(load_avg, cmap=cmap2, norm=Normalize(0.0, LVMAX),
@@ -267,9 +287,12 @@ cbar2.ax.tick_params(labelsize=15)
 # 节假日标注（图下方一行，说明这些天已并入对应星期均值、未单独剔除）
 hol_line = f"2025 法定节假日（已并入对应星期均值，未剔除）：{HOLIDAYS_2025}"
 fig2.text(0.5, -0.03, hol_line, transform=fig2.transFigure,
-          ha="center", va="top", fontsize=15, color="#000000")
+          ha="center", va="top", fontsize=15, color="#444444")
 
 fig2.savefig(OUTPUT2, dpi=300, bbox_inches="tight", facecolor="white")   # 图2
+# 保存与弹窗同步（图2 同样先落盘、立即弹出）
+plt.show(block=False)
+plt.pause(0.5)
 
 
 # ---------- 收尾 ----------
